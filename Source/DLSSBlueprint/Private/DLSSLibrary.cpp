@@ -39,6 +39,10 @@ static const FName SetDLSSModeInvalidEnumValueError= FName("SetDLSSModeInvalidEn
 static const FName IsDLSSModeSupportedInvalidEnumValueError = FName("IsDLSSModeSupportedInvalidEnumValueError");
 
 UDLSSSupport UDLSSLibrary::DLSSSupport = UDLSSSupport::NotSupportedByPlatformAtBuildTime;
+#if WITH_DLSS
+int32 UDLSSLibrary::MinDLSSDriverVersionMajor = 0;
+int32 UDLSSLibrary::MinDLSSDriverVersionMinor = 0;
+#endif
 
 #if WITH_DLSS
 
@@ -122,7 +126,7 @@ static EDLSSQualityMode ToEDLSSQualityMode(UDLSSMode InDLSSQualityMode)
 	}
 }
 
-static int32 ToDLSSQualityCVarValue(UDLSSMode DLSSMode)
+int32 UDLSSLibrary::ToDLSSQualityCVarValue(UDLSSMode DLSSMode)
 {
 	return static_cast<int32>(ToEDLSSQualityMode(DLSSMode));
 }
@@ -266,12 +270,8 @@ UDLSSSupport UDLSSLibrary::QueryDLSSSupport()
 void  UDLSSLibrary::GetDLSSMinimumDriverVersion(int32& MinDriverVersionMajor, int32& MinDriverVersionMinor)
 {
 #if WITH_DLSS
-	const NGXRHI* NGXRHIExtensions = DLSSUpscaler ? DLSSUpscaler->GetNGXRHI() : nullptr;
-
-	FNGXDriverRequirements DriverRequirements = NGXRHIExtensions ? NGXRHIExtensions->GetDLSSDriverRequirements() : FNGXDriverRequirements();
-
-	MinDriverVersionMajor = DriverRequirements.MinDriverVersionMajor;
-	MinDriverVersionMinor = DriverRequirements.MinDriverVersionMinor;
+	MinDriverVersionMajor = MinDLSSDriverVersionMajor;
+	MinDriverVersionMinor = MinDLSSDriverVersionMinor;
 #else
 	MinDriverVersionMajor = 0;
 	MinDriverVersionMinor = 0;
@@ -383,7 +383,10 @@ void UDLSSLibrary::SetDLSSSharpness(float Sharpness)
 	
 	if (CVarNGXDLSSharpness)
 	{
-		CVarNGXDLSSharpness->Set(Sharpness, ECVF_SetByCommandline);
+
+		// Quantize here so we can have sharpness snap to 0, which downstream is used to turn off the NGX sharpening flag
+		// CVarNGXDLSSharpness->Set(Sharpness, ECVF_SetByCommandline)  internally uses	Set(*FString::Printf(TEXT("%g"), InValue), SetBy);
+		CVarNGXDLSSharpness->Set(*FString::Printf(TEXT("%2.2f"), Sharpness), ECVF_SetByCommandline);
 	}
 #endif
 }
@@ -451,6 +454,7 @@ void FDLSSBlueprintModule::StartupModule()
 
 	UDLSSLibrary::DLSSUpscaler = DLSSModule->GetDLSSUpscaler();
 	UDLSSLibrary::DLSSSupport = ToUDLSSSupport(DLSSModule->QueryDLSSSupport());
+	DLSSModule->GetDLSSMinDriverVersion(UDLSSLibrary::MinDLSSDriverVersionMajor, UDLSSLibrary::MinDLSSDriverVersionMinor);
 
 #if !UE_BUILD_SHIPPING
 	UDLSSLibrary::DLSSOnScreenMessagesDelegateHandle = FCoreDelegates::OnGetOnScreenMessages.AddStatic(&UDLSSLibrary::GetDLSSOnScreenMessages);

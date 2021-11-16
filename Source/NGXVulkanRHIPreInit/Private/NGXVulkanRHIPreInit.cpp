@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2020 NVIDIA CORPORATION.  All rights reserved.
+* Copyright (c) 2020 - 2021 NVIDIA CORPORATION.  All rights reserved.
 *
 * NVIDIA Corporation and its licensors retain all intellectual property and proprietary
 * rights in and to this software, related documentation and any modifications thereto.
@@ -77,7 +77,7 @@ void FNGXVulkanRHIPreInitModule::StartupModule()
 	}
 	else
 	{
-		UE_LOG(LogDLSSNGXVulkanRHIPreInit, Log, TEXT("This UE4 instance does not render; skipping of pregistering the required NGX DLSS Vulkan device and instance extensions via the VulkanRHIBridge"));
+		UE_LOG(LogDLSSNGXVulkanRHIPreInit, Log, TEXT("This UE instance does not render; skipping of pregistering the required NGX DLSS Vulkan device and instance extensions via the VulkanRHIBridge"));
 	}
 	UE_LOG(LogDLSSNGXVulkanRHIPreInit, Log, TEXT("%s Leave"), ANSI_TO_TCHAR(__FUNCTION__));
 

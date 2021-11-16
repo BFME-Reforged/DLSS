@@ -23,11 +23,17 @@ using System.IO;
 
 public class NGX : ModuleRules
 {
-    public NGX (ReadOnlyTargetRules Target) : base(Target)
+
+	protected virtual bool IsSupportedWindowsPlatform(ReadOnlyTargetRules Target)
+	{
+		return Target.Platform == UnrealTargetPlatform.Win64;
+	}
+
+	public NGX (ReadOnlyTargetRules Target) : base(Target)
 	{
 		Type = ModuleType.External;
 
-		if (Target.Platform == UnrealTargetPlatform.Win64)
+		if (IsSupportedWindowsPlatform(Target))
 		{
             string NGXPath = ModuleDirectory + "/";
             
@@ -68,6 +74,10 @@ public class NGX : ModuleRules
 			foreach (string NGXSnippetDLL in NGXSnippetDLLs)
 			{
 				RuntimeDependencies.Add("$(PluginDir)/Binaries/ThirdParty/Win64/" + NGXSnippetDLL, StagedFileType.NonUFS);
+				if (Target.Configuration != UnrealTargetConfiguration.Shipping)
+				{
+					RuntimeDependencies.Add("$(PluginDir)/Binaries/ThirdParty/Win64/Development/" + NGXSnippetDLL, StagedFileType.DebugNonUFS);
+				}
 			}
 		}
 	}

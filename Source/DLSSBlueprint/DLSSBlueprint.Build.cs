@@ -23,6 +23,11 @@ using System.IO;
 
 public class DLSSBlueprint : ModuleRules
 {
+	protected virtual bool IsSupportedPlatform(ReadOnlyTargetRules Target)
+	{
+		return Target.Platform == UnrealTargetPlatform.Win64;
+	}
+
 	public DLSSBlueprint(ReadOnlyTargetRules Target) : base(Target)
 	{
 		PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
@@ -48,7 +53,7 @@ public class DLSSBlueprint : ModuleRules
 			}
 			);
 
-		bool bPlatformSupportsDLSS = Target.Platform == UnrealTargetPlatform.Win64;
+		bool bPlatformSupportsDLSS = IsSupportedPlatform(Target);
 	
 		PublicDefinitions.Add("WITH_DLSS=" + (bPlatformSupportsDLSS ? '1' : '0'));
 
@@ -85,4 +90,6 @@ public class DLSSBlueprint : ModuleRules
 			);
 		}
 	}
+
+
 }

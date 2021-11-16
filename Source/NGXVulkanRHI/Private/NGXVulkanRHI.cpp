@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2020 NVIDIA CORPORATION.  All rights reserved.
+* Copyright (c) 2020 - 2021 NVIDIA CORPORATION.  All rights reserved.
 *
 * NVIDIA Corporation and its licensors retain all intellectual property and proprietary
 * rights in and to this software, related documentation and any modifications thereto.
@@ -110,7 +110,7 @@ NVSDK_NGX_Result FNGXVulkanRHI::Init_NGX_VK(const FNGXRHICreateArguments& InArgu
 
 	if (NVSDK_NGX_SUCCEED(Result) && (APIVersion + 1 < NVSDK_NGX_VERSION_API_MACRO_WITH_LOGGING))
 	{
-		UE_LOG(LogDLSSNGXVulkanRHI, Log, TEXT("Warning: NVSDK_NGX_VULKAN_Init succeeded, but the driver installed on this system is too old the support the NGX logging API. The console variables r.NGX.LogLevel and r.NGX.EnableOtherLoggingSinks will have no effect and NGX logs will only show up in their own log files, and not in UE4's log files."));
+		UE_LOG(LogDLSSNGXVulkanRHI, Log, TEXT("Warning: NVSDK_NGX_VULKAN_Init succeeded, but the driver installed on this system is too old the support the NGX logging API. The console variables r.NGX.LogLevel and r.NGX.EnableOtherLoggingSinks will have no effect and NGX logs will only show up in their own log files, and not in UE's log files."));
 	}
 
 	return Result;
@@ -228,6 +228,8 @@ void FNGXVulkanRHI::ExecuteDLSS(FRHICommandList& CmdList, const FRHIDLSSArgument
 			NVSDK_NGX_Result Result = NVSDK_NGX_VULKAN_GetParameters(&NewNGXParameterHandle);
 			checkf(NVSDK_NGX_SUCCEED(Result), TEXT("NVSDK_NGX_VULKAN_GetParameters failed! (%u %s)"), Result, GetNGXResultAsString(Result));
 		}
+		
+		ApplyCommonNGXParameterSettings(NewNGXParameterHandle, InArguments);
 
 		NVSDK_NGX_DLSS_Create_Params DlssCreateParams = InArguments.GetNGXDLSSCreateParams();
 		NVSDK_NGX_Handle* NewNGXHandle = nullptr;
@@ -318,7 +320,7 @@ void FNGXVulkanRHI::ExecuteDLSS(FRHICommandList& CmdList, const FRHIDLSSArgument
 	DlssEvalParams.InMVSubrectBase.Y = 0;
 
 	NVSDK_NGX_Resource_VK InExposureTexture = NGXVulkanResourceFromRHITexture(InArguments.InputExposure);
-	DlssEvalParams.pInExposureTexture = &InExposureTexture;
+	DlssEvalParams.pInExposureTexture = InArguments.bUseAutoExposure ? nullptr : &InExposureTexture;
 	DlssEvalParams.InPreExposure = InArguments.PreExposure;
 
 	DlssEvalParams.Feature.InSharpness = InArguments.Sharpness;

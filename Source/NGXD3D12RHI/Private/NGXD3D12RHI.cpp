@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2020 NVIDIA CORPORATION.  All rights reserved.
+* Copyright (c) 2020 - 2021 NVIDIA CORPORATION.  All rights reserved.
 *
 * NVIDIA Corporation and its licensors retain all intellectual property and proprietary
 * rights in and to this software, related documentation and any modifications thereto.
@@ -123,7 +123,7 @@ NVSDK_NGX_Result FNGXD3D12RHI::Init_NGX_D3D12(const FNGXRHICreateArguments& InAr
 
 	if (NVSDK_NGX_SUCCEED(Result) && (APIVersion + 1 < NVSDK_NGX_VERSION_API_MACRO_WITH_LOGGING))
 	{
-		UE_LOG(LogDLSSNGXD3D12RHI, Log, TEXT("Warning: NVSDK_NGX_D3D12_Init succeeded, but the driver installed on this system is too old the support the NGX logging API. The console variables r.NGX.LogLevel and r.NGX.EnableOtherLoggingSinks will have no effect and NGX logs will only show up in their own log files, and not in UE4's log files."));
+		UE_LOG(LogDLSSNGXD3D12RHI, Log, TEXT("Warning: NVSDK_NGX_D3D12_Init succeeded, but the driver installed on this system is too old the support the NGX logging API. The console variables r.NGX.LogLevel and r.NGX.EnableOtherLoggingSinks will have no effect and NGX logs will only show up in their own log files, and not in UE's log files."));
 	}
 
 	return Result;
@@ -240,6 +240,8 @@ void FNGXD3D12RHI::ExecuteDLSS(FRHICommandList& CmdList, const FRHIDLSSArguments
 			checkf(NVSDK_NGX_SUCCEED(Result), TEXT("NVSDK_NGX_D3D12_GetParameters failed! (%u %s)"), Result, GetNGXResultAsString(Result));
 		}
 
+		ApplyCommonNGXParameterSettings(NewNGXParameterHandle, InArguments);
+
 		NVSDK_NGX_DLSS_Create_Params DlssCreateParams = InArguments.GetNGXDLSSCreateParams();
 		NVSDK_NGX_Handle* NewNGXFeatureHandle = nullptr;
 
@@ -287,7 +289,7 @@ void FNGXD3D12RHI::ExecuteDLSS(FRHICommandList& CmdList, const FRHIDLSSArguments
 	DlssEvalParams.InMVSubrectBase.X = 0;
 	DlssEvalParams.InMVSubrectBase.Y = 0;
 
-	DlssEvalParams.pInExposureTexture = GetD3D12TextureFromRHITexture(InArguments.InputExposure)->GetResource()->GetResource();
+	DlssEvalParams.pInExposureTexture = InArguments.bUseAutoExposure ? nullptr : GetD3D12TextureFromRHITexture(InArguments.InputExposure)->GetResource()->GetResource();
 	DlssEvalParams.InPreExposure = InArguments.PreExposure;
 
 	DlssEvalParams.Feature.InSharpness = InArguments.Sharpness;

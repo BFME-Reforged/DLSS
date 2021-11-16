@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2020 NVIDIA CORPORATION.  All rights reserved.
+* Copyright (c) 2020 - 2021 NVIDIA CORPORATION.  All rights reserved.
 *
 * NVIDIA Corporation and its licensors retain all intellectual property and proprietary
 * rights in and to this software, related documentation and any modifications thereto.
@@ -29,7 +29,7 @@
 
 // NGX software stack
 DEFINE_LOG_CATEGORY_STATIC(LogDLSSNGX, Log, All);
-// The UE4 module
+// The UE module
 DEFINE_LOG_CATEGORY_STATIC(LogDLSSNGXRHI, Log, All);
 
 
@@ -62,6 +62,14 @@ static TAutoConsoleVariable<int32> CVarNGXFramesUntilFeatureDestruction(
 	TEXT("Number of frames until an unused NGX feature gets destroyed. (default=3)"),
 	ECVF_RenderThreadSafe);
 
+static TAutoConsoleVariable<int32> CVarNGXRenameLogSeverities(
+	TEXT("r.NGX.RenameNGXLogSeverities"), 1,
+	TEXT("Renames 'error' and 'warning' in messages returned by the NGX log callback to 'e_rror' and 'w_arning' before passing them to the UE log system\n")
+	TEXT("0: off \n")
+	TEXT("1: on, for select messages during initalization (default)\n")
+	TEXT("2: on, for all messages\n"),
+	ECVF_Default);
+
 void FRHIDLSSArguments::Validate() const
 {
 	check(InputColor);
@@ -89,14 +97,23 @@ void NVSDK_CONV NGXLogSink(const char* InNGXMessage, NVSDK_NGX_Logging_Level InL
 		case NVSDK_NGX_Feature_Reserved_Core: NGXComponent = TEXT("Core");	break;
 	}
 
-	if (InLoggingLevel == NVSDK_NGX_LOGGING_LEVEL_VERBOSE)
+	const bool bIsVerboseStartupMessage =
+		(Message.Contains(TEXT(" doesn't exist in any of the search paths")) && !Message.Contains(TEXT("nvngx_dlss.dll"))) || // we want to know if the DLSS binary is missing
+		Message.Contains(TEXT("warning: UWP compliant mode enabled"));
+
+	
+
+	if ((CVarNGXRenameLogSeverities.GetValueOnAnyThread() == 2) || ((CVarNGXRenameLogSeverities.GetValueOnAnyThread() == 1) && bIsVerboseStartupMessage))
 	{
+		Message = Message.Replace(TEXT("error:"), TEXT("e_rror:"));
+		Message = Message.Replace(TEXT("Warning:"), TEXT("w_arning:"));
 		UE_LOG(LogDLSSNGX, Verbose, TEXT("[%s]: %s"), NGXComponent, *Message);
 	}
 	else
 	{
 		UE_LOG(LogDLSSNGX, Log, TEXT("[%s]: %s"), NGXComponent, *Message);
 	}
+
 }
 
 
@@ -111,8 +128,10 @@ bool NGXRHI::bIsIncompatibleAPICaptureToolActive = false;
 NGXRHI::NGXRHI(const FNGXRHICreateArguments& Arguments)
 	: DynamicRHI(Arguments.DynamicRHI)
 {
-	FString PluginNGXBinariesDir  = FPaths::Combine(Arguments.PluginBaseDir, TEXT("Binaries/ThirdParty/Win64/"));
-	
+	FString PluginNGXProductionBinariesDir  = FPaths::Combine(Arguments.PluginBaseDir, TEXT("Binaries/ThirdParty/Win64/"));
+	FString PluginNGXDevelopmentBinariesDir = FPaths::Combine(Arguments.PluginBaseDir, TEXT("Binaries/ThirdParty/Win64/Development/"));
+	FString PluginNGXBinariesDir = PluginNGXProductionBinariesDir;
+
 	// Thee paths can be different depending on the project type (source, no source) and how the project is packaged, thus we have both
 	FString ProjectNGXBinariesDir = FPaths::Combine(FPaths::ProjectDir(), TEXT("Binaries/ThirdParty/NVIDIA/NGX/Win64/"));
 	FString LaunchNGXBinariesDir  = FPaths::Combine(FPaths::LaunchDir(), TEXT("Binaries/ThirdParty/NVIDIA/NGX/Win64/"));
@@ -123,19 +142,26 @@ NGXRHI::NGXRHI(const FNGXRHICreateArguments& Arguments)
 		case ENGXBinariesSearchOrder::CustomThenGeneric:
 		{
 			UE_LOG(LogDLSSNGXRHI, Log, TEXT("Searching for custom and generic DLSS binaries"));
-			NGXDLLSearchPaths.Append({ ProjectNGXBinariesDir, LaunchNGXBinariesDir, PluginNGXBinariesDir });
+			NGXDLLSearchPaths.Append({ ProjectNGXBinariesDir, LaunchNGXBinariesDir, PluginNGXProductionBinariesDir });
 			break;
 		}
  		case  ENGXBinariesSearchOrder::ForceGeneric:
 		{
 			UE_LOG(LogDLSSNGXRHI, Log, TEXT("Searching only for generic binaries from the plugin folder"));
-			NGXDLLSearchPaths.Append({ PluginNGXBinariesDir });
+			NGXDLLSearchPaths.Append({ PluginNGXProductionBinariesDir });
 			break;
 		}
 		case ENGXBinariesSearchOrder::ForceCustom:
 		{
 			UE_LOG(LogDLSSNGXRHI, Log, TEXT("Searching only for custom DLSS binaries from the DLSS plugin"));
 			NGXDLLSearchPaths.Append({ ProjectNGXBinariesDir, LaunchNGXBinariesDir });
+			break;
+		}
+		case ENGXBinariesSearchOrder::ForceDevelopmentGeneric:
+		{
+			UE_LOG(LogDLSSNGXRHI, Log, TEXT("Searching only for generic development DLSS binaries from the DLSS plugin. This binary is only packaged for non-shipping build configurations"));
+			NGXDLLSearchPaths.Append({ PluginNGXDevelopmentBinariesDir });
+			PluginNGXBinariesDir = PluginNGXDevelopmentBinariesDir;
 			break;
 		}
 	}
@@ -151,7 +177,7 @@ NGXRHI::NGXRHI(const FNGXRHICreateArguments& Arguments)
 		const bool bHasDLSSBinary = IPlatformFile::GetPlatformPhysical().FileExists(*FPaths::Combine(NGXDLLSearchPaths[i], NGX_DLSS_BINARY_NAME));
 		UE_LOG(LogDLSSNGXRHI, Log, TEXT("NVIDIA NGX DLSS binary %s %s in search path %s"), NGX_DLSS_BINARY_NAME, bHasDLSSBinary ? TEXT("found") : TEXT("not found"), *NGXDLLSearchPaths[i]);
 	}
-
+	
 	// we do this separately here so we can show relative paths in the UI later
 	DLSSGenericBinaryInfo.Get<0>() = FPaths::Combine(PluginNGXBinariesDir, NGX_DLSS_BINARY_NAME);
 	DLSSGenericBinaryInfo.Get<1>() = IPlatformFile::GetPlatformPhysical().FileExists(*DLSSGenericBinaryInfo.Get<0>());
@@ -229,8 +255,19 @@ void NGXRHI::FDLSSQueryFeature::QueryDLSSSupport()
 	if (NVSDK_NGX_SUCCEED(ResultUpdatedDriver) && NVSDK_NGX_SUCCEED(ResultMinDriverVersionMajor) && NVSDK_NGX_SUCCEED(ResultMinDriverVersionMinor))
 	{
 		DriverRequirements.DriverUpdateRequired = DriverRequirements.DriverUpdateRequired || bNeedsUpdatedDriver != 0;
-		DriverRequirements.MinDriverVersionMajor = MinDriverVersionMajor;
-		DriverRequirements.MinDriverVersionMinor = MinDriverVersionMinor;
+		
+		// ignore 0.0 and fall back to the what's baked into FNGXDriverRequirements;
+		if (MinDriverVersionMajor)
+		{
+			
+			DriverRequirements.MinDriverVersionMajor = MinDriverVersionMajor;
+		}
+
+		if (MinDriverVersionMinor)
+		{
+			DriverRequirements.MinDriverVersionMinor = MinDriverVersionMinor;
+		}
+
 
 		if (bNeedsUpdatedDriver)
 		{
@@ -329,6 +366,7 @@ uint32 FRHIDLSSArguments::GetNGXCommonDLSSFeatureFlags() const
 	DLSSFeatureFlags |= bool(ERHIZBuffer::IsInverted) ? NVSDK_NGX_DLSS_Feature_Flags_DepthInverted : 0;
 	DLSSFeatureFlags |= !bHighResolutionMotionVectors ? NVSDK_NGX_DLSS_Feature_Flags_MVLowRes : 0;
 	DLSSFeatureFlags |= Sharpness != 0.0f ? NVSDK_NGX_DLSS_Feature_Flags_DoSharpening : 0;
+	DLSSFeatureFlags |= bUseAutoExposure ? NVSDK_NGX_DLSS_Feature_Flags_AutoExposure : 0;
 	return DLSSFeatureFlags;
 }
 
@@ -401,6 +439,11 @@ void NGXRHI::ReleaseAllocatedFeatures()
 	AllocatedDLSSFeatures.Empty();
 	SET_DWORD_STAT(STAT_DLSSNumFeatures, AllocatedDLSSFeatures.Num());
 	UE_LOG(LogDLSSNGXRHI, Log, TEXT("%s Leave"), ANSI_TO_TCHAR(__FUNCTION__));
+}
+
+void NGXRHI::ApplyCommonNGXParameterSettings(NVSDK_NGX_Parameter* InOutParameter, const FRHIDLSSArguments& InArguments)
+{
+	NVSDK_NGX_Parameter_SetI(InOutParameter, NVSDK_NGX_Parameter_FreeMemOnReleaseFeature, InArguments.bReleaseMemoryOnDelete ? 1 : 0);
 }
 
 void NGXRHI::TickPoolElements()

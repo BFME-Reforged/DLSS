@@ -25,6 +25,7 @@
 #include "PostProcess/TemporalAA.h"
 #include "ScreenPass.h"
 #include "NGXRHI.h"
+#include "DLSSSettings.h"
 
 #include "CustomStaticScreenPercentage.h"
 #include "CustomResourcePool.h"
@@ -100,6 +101,12 @@ public:
 
 	// Inherited via ICustomStaticScreenPercentage
 	virtual void SetupMainGameViewFamily(FSceneViewFamily& ViewFamily) final;
+
+#if DLSS_ENGINE_SUPPORTS_CSSPD
+	/** Allows to setup View Family directly. To be used by modules that are aware of DLSS Plugin. */
+	virtual void SetupViewFamily(FSceneViewFamily& ViewFamily, TSharedPtr<ICustomStaticScreenPercentageData> InScreenPercentageDataInterface) final;
+#endif
+
 	virtual float GetMinUpsampleResolutionFraction() const final;
 	virtual float GetMaxUpsampleResolutionFraction() const final;
 

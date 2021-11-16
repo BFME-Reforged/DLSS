@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2020 NVIDIA CORPORATION.  All rights reserved.
+* Copyright (c) 2020 - 2021 NVIDIA CORPORATION.  All rights reserved.
 *
 * NVIDIA Corporation and its licensors retain all intellectual property and proprietary
 * rights in and to this software, related documentation and any modifications thereto.
@@ -44,10 +44,11 @@ static TAutoConsoleVariable<int32> CVarNGXBinarySearchOrder(
 	TEXT("r.NGX.BinarySearchOrder"),
 	0,
 	TEXT("0: automatic: (default)\n")
-	TEXT("   use production binaries from project and launch folder $(ProjectDir)/Binaries/ThirdParty/NVIDIA/NGX/$(Platform) if present\n")
+	TEXT("   use custom binaries from project and launch folder $(ProjectDir)/Binaries/ThirdParty/NVIDIA/NGX/$(Platform) if present\n")
 	TEXT("   fallback to generic binaries from plugin folder\n")
 	TEXT("1: force generic binaries from plugin folder, fail if not found\n")
-	TEXT("2: force custom binaries from project or launch folder, fail if not found\n"),
+	TEXT("2: force custom binaries from project or launch folder, fail if not found\n")
+	TEXT("3: force generic development binaries from plugin folder, fail if not found. This is only supported in non-shipping build configurations\n"),
 		ECVF_ReadOnly);
 
 static TAutoConsoleVariable<int32> CVarNGXEnable(
@@ -66,8 +67,8 @@ static TAutoConsoleVariable<int32> CVarNGXProjectIdentifier(
 	TEXT("r.NGX.ProjectIdentifier"),
 	0,
 	TEXT("0: automatic: (default)\n")
-	TEXT("   use NVIDIA NGX Application ID if non-zero, otherwise use UE4 Project ID)\n")
-	TEXT("1: force UE4 Project ID\n")
+	TEXT("   use NVIDIA NGX Application ID if non-zero, otherwise use UE Project ID)\n")
+	TEXT("1: force UE Project ID\n")
 	TEXT("2: force NVIDIA NGX Application ID (set via the Project Settings -> NVIDIA DLSS plugin)\n"),
 	ECVF_ReadOnly);
 
@@ -94,7 +95,17 @@ static TAutoConsoleVariable<int> CVarNGXAutomationNonGameViews(
 class FNGXAutomationViewExtension final : public FSceneViewExtensionBase
 {
 public:
-	FNGXAutomationViewExtension(const FAutoRegister& AutoRegister): FSceneViewExtensionBase(AutoRegister)	{}
+	FNGXAutomationViewExtension(const FAutoRegister& AutoRegister): FSceneViewExtensionBase(AutoRegister)	
+	{
+		FSceneViewExtensionIsActiveFunctor IsActiveFunctor;
+
+		IsActiveFunctor.IsActiveFunction = [](const ISceneViewExtension* SceneViewExtension, const FSceneViewExtensionContext& Context)
+		{
+			return CVarNGXAutomationEnable.GetValueOnAnyThread();
+		};
+
+		IsActiveThisFrameFunctions.Add(IsActiveFunctor);
+	}
 
 	virtual void SetupViewFamily(FSceneViewFamily& InViewFamily) {}
 	virtual void SetupView(FSceneViewFamily& InViewFamily, FSceneView& InView) {}
@@ -119,11 +130,6 @@ public:
 				RHICmdList.PopEvent();
 			}
 		}
-	}
-
-	virtual bool IsActiveThisFrame(class FViewport* InViewport) const final
-	{
-		return CVarNGXAutomationEnable.GetValueOnAnyThread();
 	}
 };
 
@@ -219,7 +225,11 @@ void FDLSSModule::StartupModule()
 		DLSSSupport = EDLSSSupport::NotSupportedIncompatibleHardware;
 	}
 #if PLATFORM_WINDOWS
-	else if (NGXDLSSMinimumWindowsBuildVersion > 0 && !FPlatformMisc::VerifyWindowsVersion(10, 0, NGXDLSSMinimumWindowsBuildVersion))
+	else if (NGXDLSSMinimumWindowsBuildVersion > 0 && !FPlatformMisc::VerifyWindowsVersion(10, 0
+		#if PLATFORM_DESKTOP
+		, NGXDLSSMinimumWindowsBuildVersion
+		#endif
+	))
 	{
 		// From https://docs.microsoft.com/en-us/windows/release-information/
 		UE_LOG(LogDLSS, Log, TEXT("NVIDIA NGX DLSS requires at least Windows 10, build %u "), NGXDLSSMinimumWindowsBuildVersion);
@@ -331,7 +341,6 @@ void FDLSSModule::StartupModule()
 				else
 				{
 					// map some of the NGX error codes to something that the UI/gameplay could suggest the end user to do something about
-					check(!NVSDK_NGX_SUCCEED(NGXRHIExtensions->GetDLSSInitResult()));
 					switch (NGXRHIExtensions->GetDLSSInitResult())
 					{
 						case NVSDK_NGX_Result_FAIL_OutOfDate:
@@ -357,6 +366,8 @@ void FDLSSModule::StartupModule()
 					{
 						UE_LOG(LogDLSS, Log, TEXT("NVIDIA NGX DLSS cannot be loaded properly. Please verify that at least this driver version is installed: %u.%u"), DriverRequirements.MinDriverVersionMajor, DriverRequirements.MinDriverVersionMinor);
 						DLSSSupport = EDLSSSupport::NotSupportedDriverOutOfDate;
+						MinDriverVersionMajor = DriverRequirements.MinDriverVersionMajor;
+						MinDriverVersionMinor = DriverRequirements.MinDriverVersionMinor;
 					}
 					
 				}
@@ -488,6 +499,14 @@ EDLSSSupport FDLSSModule::QueryDLSSSupport() const
 {
 	return DLSSSupport;
 }
+
+
+void FDLSSModule::GetDLSSMinDriverVersion(int32& OutMajorVersion, int32& OutMinorVersion) const
+{
+	OutMajorVersion = MinDriverVersionMajor;
+	OutMinorVersion = MinDriverVersionMinor;
+}
+
 
 float FDLSSModule::GetResolutionFractionForQuality(int32 Quality) const
 {

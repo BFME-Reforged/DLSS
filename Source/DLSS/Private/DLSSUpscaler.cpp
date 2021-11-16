@@ -71,7 +71,7 @@ static TAutoConsoleVariable<bool> CVarNGXDLSSAutoQualitySetting(
 static TAutoConsoleVariable<float> CVarNGXDLSSSharpness(
 	TEXT("r.NGX.DLSS.Sharpness"),
 	0.0f,
-	TEXT("0.0 to 1.0: Sharpening to apply to the DLSS pass (default: 0.0f)"),
+	TEXT("-1.0 to 1.0: Softening/sharpening to apply to the DLSS pass. Negative values soften the image, positive values sharpen. (default: 0.0f)"),
 	ECVF_RenderThreadSafe);
 
 static TAutoConsoleVariable<int32> CVarNGXDLSSDilateMotionVectors(
@@ -79,6 +79,18 @@ static TAutoConsoleVariable<int32> CVarNGXDLSSDilateMotionVectors(
 	1,
 	TEXT(" 0: pass low resolution motion vectors into DLSS\n")
 	TEXT(" 1: pass dilated high resolution motion vectors into DLSS. This can help with improving image quality of thin details. (default)"),
+	ECVF_RenderThreadSafe);
+
+static TAutoConsoleVariable<int32> CVarNGXDLSSAutoExposure(
+	TEXT("r.NGX.DLSS.AutoExposure"), 0,
+	TEXT("0: Use the engine-computed exposure value for input images to DLSS (default)\n")
+	TEXT("1: Enable DLSS internal auto-exposure instead of the application provided one - enabling this can alleviate effects such as ghosting in darker scenes.\n"),
+	ECVF_RenderThreadSafe);
+
+static TAutoConsoleVariable<int32> CVarNGXDLSSReleaseMemoryOnDelete(
+	TEXT("r.NGX.DLSS.ReleaseMemoryOnDelete"), 
+	1,
+	TEXT("Enabling/disable releasing DLSS related memory on the NGX side when DLSS features get released.(default=1)"),
 	ECVF_RenderThreadSafe);
 
 DECLARE_GPU_STAT(DLSS)
@@ -412,8 +424,11 @@ FDLSSOutputs FDLSSUpscaler::AddDLSSPass(
 		const float DeltaWorldTime = View.Family->DeltaWorldTime;
 
 		const float PreExposure = View.PreExposure;
+		const bool bUseAutoExposure = CVarNGXDLSSAutoExposure.GetValueOnRenderThread() != 0;
 
-		const float Sharpness = FMath::Clamp(CVarNGXDLSSSharpness.GetValueOnRenderThread(), 0.0f, 1.0f);
+		const bool bReleaseMemoryOnDelete = CVarNGXDLSSReleaseMemoryOnDelete.GetValueOnRenderThread() != 0;
+
+		const float Sharpness = FMath::Clamp(CVarNGXDLSSSharpness.GetValueOnRenderThread(), -1.0f, 1.0f);
 		NGXRHI* LocalNGXRHIExtensions = this->NGXRHIExtensions;
 		const int32 NGXPerfQuality = ToNGXQuality(DLSSQualityMode);
 		GraphBuilder.AddPass(
@@ -424,7 +439,7 @@ FDLSSOutputs FDLSSUpscaler::AddDLSSPass(
 				DestRect.Width(), DestRect.Height()),
 			PassParameters,
 			ERDGPassFlags::Compute | ERDGPassFlags::Raster | ERDGPassFlags::SkipRenderPass,
-			[LocalNGXRHIExtensions, PassParameters, Inputs, bCameraCut, JitterOffset, DeltaWorldTime, PreExposure, Sharpness, NGXPerfQuality, DLSSState](FRHICommandListImmediate& RHICmdList)
+			[LocalNGXRHIExtensions, PassParameters, Inputs, bCameraCut, JitterOffset, DeltaWorldTime, PreExposure, Sharpness, NGXPerfQuality, DLSSState, bUseAutoExposure, bReleaseMemoryOnDelete](FRHICommandListImmediate& RHICmdList)
 		{
 			FRHIDLSSArguments DLSSArguments;
 			FMemory::Memzero(&DLSSArguments, sizeof(DLSSArguments));
@@ -440,6 +455,7 @@ FDLSSOutputs FDLSSUpscaler::AddDLSSPass(
 			DLSSArguments.MotionVectorScale = FVector2D(1.0f, 1.0f);
 			DLSSArguments.bHighResolutionMotionVectors = Inputs.bHighResolutionMotionVectors;
 			DLSSArguments.DeltaTime = DeltaWorldTime;
+			DLSSArguments.bReleaseMemoryOnDelete = bReleaseMemoryOnDelete;
 
 			DLSSArguments.PerfQuality = NGXPerfQuality;
 
@@ -466,8 +482,8 @@ FDLSSOutputs FDLSSUpscaler::AddDLSSPass(
 			check(PassParameters->SceneColorOutput);
 			PassParameters->SceneColorOutput->MarkResourceAsUsed();
 			DLSSArguments.OutputColor = PassParameters->SceneColorOutput->GetRHI();
-
-
+			DLSSArguments.bUseAutoExposure = bUseAutoExposure;
+			RHICmdList.TransitionResource(ERHIAccess::UAVMask, DLSSArguments.OutputColor);
 			RHICmdList.EnqueueLambda(
 				[LocalNGXRHIExtensions, DLSSArguments, DLSSState](FRHICommandListImmediate& Cmd)
 			{
@@ -566,6 +582,37 @@ void FDLSSUpscaler::SetupMainGameViewFamily(FSceneViewFamily& ViewFamily)
 		}
 	}
 }
+
+#if DLSS_ENGINE_SUPPORTS_CSSPD
+void FDLSSUpscaler::SetupViewFamily(FSceneViewFamily& ViewFamily, TSharedPtr<ICustomStaticScreenPercentageData> InScreenPercentageDataInterface)
+{
+	check(InScreenPercentageDataInterface.IsValid());
+	TSharedPtr<FDLSSViewportQualitySetting> ScreenPercentageData = StaticCastSharedPtr<FDLSSViewportQualitySetting>(InScreenPercentageDataInterface);
+	
+	EDLSSQualityMode Quality = static_cast<EDLSSQualityMode>(ScreenPercentageData->QualitySetting);
+	if (!IsQualityModeSupported(Quality))
+	{
+		UE_LOG(LogDLSS, Warning, TEXT("DLSS Quality mode is not supported %d"), Quality);
+		return;
+	}
+	const bool bDLSSActiveWithAutomation = !GIsAutomationTesting || (GIsAutomationTesting && (CVarNGXDLSSAutomationTesting.GetValueOnAnyThread() != 0));
+	if (IsDLSSActive() && bDLSSActiveWithAutomation)
+	{
+		checkf(GTemporalUpscaler == this, TEXT("GTemporalUpscaler is not set to a DLSS upscaler . Please check that only one upscaling plugin is active."));
+		checkf(GCustomStaticScreenPercentage == this, TEXT("GCustomStaticScreenPercentage is not set to a DLSS upscaler. Please check that only one upscaling plugin is active."));
+
+		ViewFamily.SetTemporalUpscalerInterface(GetUpscalerInstanceForViewFamily(this, Quality));
+
+		if (ViewFamily.EngineShowFlags.ScreenPercentage && !ViewFamily.GetScreenPercentageInterface())
+		{
+			const float ResolutionFraction = GetOptimalResolutionFractionForQuality(Quality);
+			ViewFamily.SetScreenPercentageInterface(new FLegacyScreenPercentageDriver(
+				ViewFamily, ResolutionFraction,
+				/* AllowPostProcessSettingsScreenPercentage = */  false));
+		}
+	}
+}
+#endif
 
 TOptional<EDLSSQualityMode> FDLSSUpscaler::GetAutoQualityModeFromViewFamily(const FSceneViewFamily& ViewFamily) const
 {

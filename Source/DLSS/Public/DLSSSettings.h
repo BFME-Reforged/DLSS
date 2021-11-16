@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2020 NVIDIA CORPORATION.  All rights reserved.
+* Copyright (c) 2020 - 2021 NVIDIA CORPORATION.  All rights reserved.
 *
 * NVIDIA Corporation and its licensors retain all intellectual property and proprietary
 * rights in and to this software, related documentation and any modifications thereto.
@@ -22,6 +22,8 @@
 #include "UObject/ObjectMacros.h"
 #include "UObject/Object.h"
 #include "Engine/DeveloperSettings.h"
+#include "CustomStaticScreenPercentage.h"
+#include "Runtime/Launch/Resources/Version.h"
 
 #include "DLSSSettings.generated.h"
 
@@ -106,7 +108,7 @@ public:
 	UPROPERTY(VisibleAnywhere, Config, Category = "General Settings", DisplayName = "Exists")
 		bool bGenericDLSSBinaryExists;
 
-	/** By default the DLSS plugin uses the UE4 Project ID to initalize DLSS. In some cases NVIDIA might provide a separate NVIDIA Application ID, which should be put here. Please refer to https://developer.nvidia.com/dlss for details*/
+	/** By default the DLSS plugin uses the UE Project ID to initalize DLSS. In some cases NVIDIA might provide a separate NVIDIA Application ID, which should be put here. Please refer to https://developer.nvidia.com/dlss for details*/
 	UPROPERTY(Config, EditAnywhere, Category = "General Settings", DisplayName = "NVIDIA NGX Application ID", AdvancedDisplay)
 		uint32 NVIDIANGXApplicationId;
 
@@ -116,3 +118,17 @@ public:
 	UPROPERTY(VisibleAnywhere, Config, Category = "General Settings", DisplayName = "Exists", AdvancedDisplay)
 		bool bCustomDLSSBinaryExists;
 };
+
+#if (ENGINE_MAJOR_VERSION == 4) && (ENGINE_MINOR_VERSION >= 27)
+#define DLSS_ENGINE_SUPPORTS_CSSPD 1
+#else
+#define DLSS_ENGINE_SUPPORTS_CSSPD 0
+#endif
+
+#if DLSS_ENGINE_SUPPORTS_CSSPD
+class FDLSSViewportQualitySetting final : public ICustomStaticScreenPercentageData
+{
+public:
+	int32 QualitySetting = 0;
+};
+#endif

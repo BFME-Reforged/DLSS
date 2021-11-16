@@ -22,6 +22,20 @@ using UnrealBuildTool;
 
 public class DLSS : ModuleRules
 {
+	public virtual string [] SupportedDynamicallyLoadedNGXRHIModules(ReadOnlyTargetRules Target)
+	{
+		if(Target.Platform == UnrealTargetPlatform.Win64 )
+		{
+			return new string[]
+			{
+				"NGXD3D11RHI",
+				"NGXD3D12RHI",
+				"NGXVulkanRHI"
+			};
+		}
+		return new string[] { "" };
+	}
+
 	public DLSS(ReadOnlyTargetRules Target) : base(Target)
 	{
 		PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
@@ -68,14 +82,7 @@ public class DLSS : ModuleRules
 			}
 			);
 
-            DynamicallyLoadedModuleNames.AddRange(
-			new string[]
-			{
-					"NGXD3D11RHI",
-					"NGXD3D12RHI",
-					"NGXVulkanRHI",
-				// ... add any modules that your module loads dynamically here ...
-			}
-			);
+		DynamicallyLoadedModuleNames.AddRange(SupportedDynamicallyLoadedNGXRHIModules(Target));
+
 	}
 }

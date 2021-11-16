@@ -42,6 +42,7 @@ class IDLSSModuleInterface : public IModuleInterface
 {
 	public:
 		virtual EDLSSSupport QueryDLSSSupport() const = 0;
+		virtual void GetDLSSMinDriverVersion(int32& MajorVersion, int32& MinorVersion) const = 0;
 		virtual float GetResolutionFractionForQuality(int32 Quality) const = 0;
 		virtual FDLSSUpscaler* GetDLSSUpscaler() const = 0;
 };
@@ -56,6 +57,7 @@ public:
 
 	// Inherited via IDLSSModuleInterface
 	virtual EDLSSSupport QueryDLSSSupport() const;
+	virtual void GetDLSSMinDriverVersion(int32& MajorVersion, int32& MinorVersion) const;
 	virtual float GetResolutionFractionForQuality(int32 Quality) const;
 	virtual FDLSSUpscaler* GetDLSSUpscaler() const ;
 
@@ -66,4 +68,6 @@ private:
 	TUniquePtr<NGXRHI> NGXRHIExtensions;
 	TSharedPtr< FNGXAutomationViewExtension, ESPMode::ThreadSafe> NGXAutomationViewExtension;
 	EDLSSSupport DLSSSupport = EDLSSSupport::NotSupported;
+	int32 MinDriverVersionMinor;
+	int32 MinDriverVersionMajor;
 };

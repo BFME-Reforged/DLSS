@@ -40,7 +40,9 @@ struct FDLSSFeatureDesc
 		return DestRect.Size() != Other.DestRect.Size()
 			|| PerfQuality != Other.PerfQuality
 			|| bHighResolutionMotionVectors != Other.bHighResolutionMotionVectors
-			|| bNonZeroSharpness != Other.bNonZeroSharpness;
+			|| bNonZeroSharpness != Other.bNonZeroSharpness
+			|| bUseAutoExposure != Other.bUseAutoExposure
+			|| bReleaseMemoryOnDelete != Other.bReleaseMemoryOnDelete;
 	}
 
 	bool operator == (const FDLSSFeatureDesc& Other) const
@@ -53,6 +55,8 @@ struct FDLSSFeatureDesc
 	int32 PerfQuality = -1;
 	bool bHighResolutionMotionVectors = false;
 	bool bNonZeroSharpness = false;
+	bool bUseAutoExposure = false;
+	bool bReleaseMemoryOnDelete = false;
 
 	FString GetDebugDescription() const
 	{
@@ -68,7 +72,7 @@ struct FDLSSFeatureDesc
 				default:return TEXT("Invalid NVSDK_NGX_PerfQuality_Value");
 			}
 		};
-		return FString::Printf(TEXT("SrcRect=[%dx%d->%dx%d], DestRect=[%dx%d->%dx%d], ScaleX=%f, ScaleY=%f, NGXPerfQuality=%s(%d), bHighResolutionMotionVectors=%d, bNonZeroSharpness=%d"),
+		return FString::Printf(TEXT("SrcRect=[%dx%d->%dx%d], DestRect=[%dx%d->%dx%d], ScaleX=%f, ScaleY=%f, NGXPerfQuality=%s(%d), bHighResolutionMotionVectors=%d, bNonZeroSharpness=%d, bUseAutoExposure=%d, bReleaseMemoryOnDelete=%d"),
 			SrcRect.Min.X, SrcRect.Min.Y, SrcRect.Max.X, SrcRect.Max.Y,
 			DestRect.Min.X, DestRect.Min.Y, DestRect.Max.X, DestRect.Max.Y,
 			float(SrcRect.Width())  / float(DestRect.Width()),
@@ -76,7 +80,9 @@ struct FDLSSFeatureDesc
 			NGXPerfQualityString(PerfQuality),
 			PerfQuality,
 			bHighResolutionMotionVectors,
-			bNonZeroSharpness);
+			bNonZeroSharpness,
+			bUseAutoExposure,
+			bReleaseMemoryOnDelete);
 	}
 };
 
@@ -93,9 +99,7 @@ struct NGXRHI_API FRHIDLSSArguments
 	FIntRect DestRect = FIntRect(FIntPoint::ZeroValue, FIntPoint::ZeroValue);
 
 	FVector2D JitterOffset= FVector2D::ZeroVector;
-
 	FVector2D MotionVectorScale{ 1.0f,1.0f };
-	
 	bool bHighResolutionMotionVectors = false;
 
 	float Sharpness = 0.0f;
@@ -105,11 +109,14 @@ struct NGXRHI_API FRHIDLSSArguments
 	float DeltaTime = 0.0f;
 
 	float PreExposure = 1.0f;
+	bool bUseAutoExposure = false;
+	
+	bool bReleaseMemoryOnDelete = false;
 	void Validate() const;
 	
 	inline FDLSSFeatureDesc GetFeatureDesc() const
 	{
-		return FDLSSFeatureDesc{SrcRect, DestRect, PerfQuality, bHighResolutionMotionVectors, Sharpness != 0.0f};
+		return FDLSSFeatureDesc{SrcRect, DestRect, PerfQuality, bHighResolutionMotionVectors, Sharpness != 0.0f, bUseAutoExposure, bReleaseMemoryOnDelete};
 	}
 
 	uint32 GetNGXCommonDLSSFeatureFlags() const;
@@ -119,8 +126,8 @@ struct NGXRHI_API FRHIDLSSArguments
 struct FNGXDriverRequirements
 {
 	bool  DriverUpdateRequired = false;
-	int32 MinDriverVersionMajor = 461;
-	int32 MinDriverVersionMinor = 40;
+	int32 MinDriverVersionMajor = 470;
+	int32 MinDriverVersionMinor = 0;
 };
 
 // the API specic RHI extensions derive from this to handle the lifetime
@@ -180,7 +187,8 @@ enum class ENGXBinariesSearchOrder
 	CustomThenGeneric = 0,
 	ForceGeneric = 1,
 	ForceCustom = 2,
-	MaxValue = ForceCustom
+	ForceDevelopmentGeneric = 3,
+	MaxValue = ForceDevelopmentGeneric
 };
 
 enum class ENGXProjectIdentifier
@@ -343,7 +351,7 @@ protected:
 	TSharedPtr<NGXDLSSFeature> FindFreeFeature(const FRHIDLSSArguments& InArguments);
 
 	void ReleaseAllocatedFeatures();
-
+	void ApplyCommonNGXParameterSettings(NVSDK_NGX_Parameter* Parameter, const FRHIDLSSArguments& InArguments);
 	static FString GetNGXLogDirectory();
 
 

@@ -115,10 +115,15 @@ public:
 	UFUNCTION(BlueprintPure, Category = "DLSS", meta = (DisplayName = "Get Default DLSS Mode"))
 	static DLSSBLUEPRINT_API UDLSSMode GetDefaultDLSSMode();
 
+	/* Allows conversion from BlueprintType enums. */
+	static DLSSBLUEPRINT_API int32 ToDLSSQualityCVarValue(UDLSSMode InDLSSQualityMode);
+
 private:
 	static UDLSSSupport DLSSSupport;
-#if WITH_DLSS
 
+#if WITH_DLSS
+	static int32 MinDLSSDriverVersionMinor;
+	static int32 MinDLSSDriverVersionMajor;
 	static FDLSSUpscaler* DLSSUpscaler;
 	
 

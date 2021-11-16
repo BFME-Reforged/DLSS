@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2020 NVIDIA CORPORATION.  All rights reserved.
+* Copyright (c) 2020 - 2021 NVIDIA CORPORATION.  All rights reserved.
 *
 * NVIDIA Corporation and its licensors retain all intellectual property and proprietary
 * rights in and to this software, related documentation and any modifications thereto.
@@ -96,7 +96,8 @@ bool FNGXD3D11RHI::IsIncompatibleAPICaptureToolActive(ID3D11Device* InDirect3DDe
 
 NVSDK_NGX_Result FNGXD3D11RHI::Init_NGX_D3D11(const FNGXRHICreateArguments& InArguments, const wchar_t* InApplicationDataPath, ID3D11Device* InHandle, const NVSDK_NGX_FeatureCommonInfo* InFeatureInfo)
 {
-	NVSDK_NGX_Result Result = NVSDK_NGX_Result_Fail;	int32 APIVersion = NVSDK_NGX_VERSION_API_MACRO;
+	NVSDK_NGX_Result Result = NVSDK_NGX_Result_Fail;
+	int32 APIVersion = NVSDK_NGX_VERSION_API_MACRO;
 	do 
 	{
 		if (InArguments.InitializeNGXWithNGXApplicationID())
@@ -120,7 +121,7 @@ NVSDK_NGX_Result FNGXD3D11RHI::Init_NGX_D3D11(const FNGXRHICreateArguments& InAr
 
 	if (!NVSDK_NGX_FAILED(Result) && (APIVersion + 1 < NVSDK_NGX_VERSION_API_MACRO_WITH_LOGGING))
 	{
-		UE_LOG(LogDLSSNGXD3D11RHI, Log, TEXT("Warning: NVSDK_NGX_D3D11_Init succeeded, but the driver installed on this system is too old the support the NGX logging API. The console variables r.NGX.LogLevel and r.NGX.EnableOtherLoggingSinks will have no effect and NGX logs will only show up in their own log files, and not in UE4's log files."));
+		UE_LOG(LogDLSSNGXD3D11RHI, Log, TEXT("Warning: NVSDK_NGX_D3D11_Init succeeded, but the driver installed on this system is too old the support the NGX logging API. The console variables r.NGX.LogLevel and r.NGX.EnableOtherLoggingSinks will have no effect and NGX logs will only show up in their own log files, and not in UE's log files."));
 	}
 
 	return Result;
@@ -234,6 +235,8 @@ void FNGXD3D11RHI::ExecuteDLSS(FRHICommandList& CmdList, const FRHIDLSSArguments
 			NVSDK_NGX_Result Result = NVSDK_NGX_D3D11_GetParameters(&NewNGXParameterHandle);
 			checkf(NVSDK_NGX_SUCCEED(Result), TEXT("NVSDK_NGX_D3D11_GetParameters failed! (%u %s)"), Result, GetNGXResultAsString(Result));
 		}
+	
+		ApplyCommonNGXParameterSettings(NewNGXParameterHandle, InArguments);
 
 		NVSDK_NGX_DLSS_Create_Params DlssCreateParams = InArguments.GetNGXDLSSCreateParams();
 		NVSDK_NGX_Handle* NewNGXHandle = nullptr;
@@ -277,7 +280,7 @@ void FNGXD3D11RHI::ExecuteDLSS(FRHICommandList& CmdList, const FRHIDLSSArguments
 	DlssEvalParams.InMVSubrectBase.X = 0;
 	DlssEvalParams.InMVSubrectBase.Y = 0;
 
-	DlssEvalParams.pInExposureTexture = GetD3D11TextureFromRHITexture(InArguments.InputExposure)->GetResource();
+	DlssEvalParams.pInExposureTexture = InArguments.bUseAutoExposure ? nullptr : GetD3D11TextureFromRHITexture(InArguments.InputExposure)->GetResource();
 	DlssEvalParams.InPreExposure = InArguments.PreExposure;
 
 	DlssEvalParams.Feature.InSharpness = InArguments.Sharpness;

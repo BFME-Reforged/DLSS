@@ -42,7 +42,9 @@ struct FDLSSFeatureDesc
 			|| bHighResolutionMotionVectors != Other.bHighResolutionMotionVectors
 			|| bNonZeroSharpness != Other.bNonZeroSharpness
 			|| bUseAutoExposure != Other.bUseAutoExposure
-			|| bReleaseMemoryOnDelete != Other.bReleaseMemoryOnDelete;
+			|| bReleaseMemoryOnDelete != Other.bReleaseMemoryOnDelete
+			|| GPUNode != Other.GPUNode
+			|| GPUVisibility != Other.GPUVisibility;
 	}
 
 	bool operator == (const FDLSSFeatureDesc& Other) const
@@ -57,7 +59,8 @@ struct FDLSSFeatureDesc
 	bool bNonZeroSharpness = false;
 	bool bUseAutoExposure = false;
 	bool bReleaseMemoryOnDelete = false;
-
+	uint32 GPUNode = 0;
+	uint32 GPUVisibility = 0;
 	FString GetDebugDescription() const
 	{
 		auto NGXPerfQualityString = [] (int NGXPerfQuality)
@@ -72,17 +75,20 @@ struct FDLSSFeatureDesc
 				default:return TEXT("Invalid NVSDK_NGX_PerfQuality_Value");
 			}
 		};
-		return FString::Printf(TEXT("SrcRect=[%dx%d->%dx%d], DestRect=[%dx%d->%dx%d], ScaleX=%f, ScaleY=%f, NGXPerfQuality=%s(%d), bHighResolutionMotionVectors=%d, bNonZeroSharpness=%d, bUseAutoExposure=%d, bReleaseMemoryOnDelete=%d"),
+		return FString::Printf(TEXT("SrcRect=[%dx%d->%dx%d], DestRect=[%dx%d->%dx%d], ScaleX=%f, ScaleY=%f, NGXPerfQuality=%s(%d), bHighResolutionMotionVectors=%d, bNonZeroSharpness=%d, bUseAutoExposure=%d, bReleaseMemoryOnDelete=%d, GPUNode=%u, GPUVisibility=0x%x"),
 			SrcRect.Min.X, SrcRect.Min.Y, SrcRect.Max.X, SrcRect.Max.Y,
 			DestRect.Min.X, DestRect.Min.Y, DestRect.Max.X, DestRect.Max.Y,
-			float(SrcRect.Width())  / float(DestRect.Width()),
+			float(SrcRect.Width()) / float(DestRect.Width()),
 			float(SrcRect.Height()) / float(DestRect.Height()),
 			NGXPerfQualityString(PerfQuality),
 			PerfQuality,
 			bHighResolutionMotionVectors,
 			bNonZeroSharpness,
 			bUseAutoExposure,
-			bReleaseMemoryOnDelete);
+			bReleaseMemoryOnDelete,
+			GPUNode,
+			GPUVisibility);
+
 	}
 };
 
@@ -111,12 +117,15 @@ struct NGXRHI_API FRHIDLSSArguments
 	float PreExposure = 1.0f;
 	bool bUseAutoExposure = false;
 	
+	
 	bool bReleaseMemoryOnDelete = false;
+	uint32 GPUNode = 0;
+	uint32 GPUVisibility = 0;
 	void Validate() const;
 	
 	inline FDLSSFeatureDesc GetFeatureDesc() const
 	{
-		return FDLSSFeatureDesc{SrcRect, DestRect, PerfQuality, bHighResolutionMotionVectors, Sharpness != 0.0f, bUseAutoExposure, bReleaseMemoryOnDelete};
+		return FDLSSFeatureDesc{ SrcRect, DestRect, PerfQuality, bHighResolutionMotionVectors, Sharpness != 0.0f, bUseAutoExposure, bReleaseMemoryOnDelete, GPUNode, GPUVisibility};
 	}
 
 	uint32 GetNGXCommonDLSSFeatureFlags() const;

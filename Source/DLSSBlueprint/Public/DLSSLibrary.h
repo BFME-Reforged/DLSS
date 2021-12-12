@@ -125,7 +125,9 @@ private:
 	static int32 MinDLSSDriverVersionMinor;
 	static int32 MinDLSSDriverVersionMajor;
 	static FDLSSUpscaler* DLSSUpscaler;
-	
+	static bool bDLSSLibraryInitialized;
+
+	static bool TryInitDLSSLibrary();
 
 #if !UE_BUILD_SHIPPING
 	struct FDLSSErrorState

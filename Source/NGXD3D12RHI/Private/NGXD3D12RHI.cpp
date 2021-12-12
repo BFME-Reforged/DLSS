@@ -34,6 +34,7 @@
 #include "GenericPlatform/GenericPlatformFile.h"
 
 
+
 DEFINE_LOG_CATEGORY_STATIC(LogDLSSNGXD3D12RHI, Log, All);
 
 #define LOCTEXT_NAMESPACE "FNGXD3D12RHIModule"
@@ -61,10 +62,6 @@ public:
 
 class FNGXD3D12RHI final : public NGXRHI
 {
-	// DLSS_TODO MGPU
-	const int VisibilityNodeMask = 1;
-	const int CreationNodeMask = 1;
-	const int AdapterId = 0;
 
 public:
 	FNGXD3D12RHI(const FNGXRHICreateArguments& Arguments);
@@ -76,7 +73,7 @@ private:
 
 	FD3D12DynamicRHI* D3D12RHI = nullptr;
 
-	ID3D12Device* Direct3DDevice = nullptr;
+
 };
 
 bool FNGXD3D12RHI::IsIncompatibleAPICaptureToolActive(ID3D12Device* InDirect3DDevice)
@@ -105,12 +102,12 @@ NVSDK_NGX_Result FNGXD3D12RHI::Init_NGX_D3D12(const FNGXRHICreateArguments& InAr
 		if (InArguments.InitializeNGXWithNGXApplicationID())
 		{
 			Result = NVSDK_NGX_D3D12_Init(InArguments.NGXAppId, InApplicationDataPath, InHandle, InFeatureInfo, static_cast<NVSDK_NGX_Version>(APIVersion));
-			UE_LOG(LogDLSSNGXD3D12RHI, Log, TEXT("NVSDK_NGX_D3D12_Init(AppID= %u, APIVersion = 0x%x) -> (%u %s)"), InArguments.NGXAppId, APIVersion, Result, GetNGXResultAsString(Result));
+			UE_LOG(LogDLSSNGXD3D12RHI, Log, TEXT("NVSDK_NGX_D3D12_Init(AppID= %u, APIVersion = 0x%x, Device=%p) -> (%u %s)"), InArguments.NGXAppId, APIVersion, InHandle, Result, GetNGXResultAsString(Result));
 		}
 		else
 		{
 			Result = NVSDK_NGX_D3D12_Init_with_ProjectID(TCHAR_TO_UTF8(*InArguments.UnrealProjectID), NVSDK_NGX_ENGINE_TYPE_UNREAL, TCHAR_TO_UTF8(*InArguments.UnrealEngineVersion), InApplicationDataPath, InHandle, InFeatureInfo, static_cast<NVSDK_NGX_Version>(APIVersion));
-			UE_LOG(LogDLSSNGXD3D12RHI, Log, TEXT("NVSDK_NGX_D3D12_Init_with_ProjectID(ProjectID = %s, EngineVersion=%s, APIVersion = 0x%x) -> (%u %s)"), *InArguments.UnrealProjectID, *InArguments.UnrealEngineVersion, APIVersion, Result, GetNGXResultAsString(Result));
+			UE_LOG(LogDLSSNGXD3D12RHI, Log, TEXT("NVSDK_NGX_D3D12_Init_with_ProjectID(ProjectID = %s, EngineVersion=%s, APIVersion = 0x%x, Device=%p) -> (%u %s)"), *InArguments.UnrealProjectID, *InArguments.UnrealEngineVersion, APIVersion, InHandle,  Result, GetNGXResultAsString(Result));
 		}
 
 		if (NVSDK_NGX_FAILED(Result))
@@ -134,9 +131,10 @@ NVSDK_NGX_Result FNGXD3D12RHI::Init_NGX_D3D12(const FNGXRHICreateArguments& InAr
 FNGXD3D12RHI::FNGXD3D12RHI(const FNGXRHICreateArguments& Arguments)
 	: NGXRHI(Arguments)
 	, D3D12RHI(static_cast<FD3D12DynamicRHI*>(Arguments.DynamicRHI))
-	, Direct3DDevice(D3D12RHI->GetAdapter(AdapterId).GetD3DDevice())
-	
+
 {
+	ID3D12Device* Direct3DDevice = D3D12RHI->GetAdapter().GetD3DDevice();
+
 	ensure(D3D12RHI);
 	ensure(Direct3DDevice);
 	bIsIncompatibleAPICaptureToolActive = IsIncompatibleAPICaptureToolActive(Direct3DDevice);
@@ -211,9 +209,8 @@ void FNGXD3D12RHI::ExecuteDLSS(FRHICommandList& CmdList, const FRHIDLSSArguments
 
 	InArguments.Validate();
 
-	FD3D12Device* Device = GetD3D12TextureFromRHITexture(InArguments.InputColor)->GetParentDevice();
+	FD3D12Device* Device = D3D12RHI->GetAdapter().GetDevice(CmdList.GetGPUMask().ToIndex());
 	ID3D12GraphicsCommandList* D3DGraphicsCommandList = Device->GetCommandContext().CommandListHandle.GraphicsCommandList();
-	
 	if (InDLSSState->RequiresFeatureRecreation(InArguments))
 	{
 		check(!InDLSSState->DLSSFeature || InDLSSState->HasValidFeature());
@@ -245,6 +242,9 @@ void FNGXD3D12RHI::ExecuteDLSS(FRHICommandList& CmdList, const FRHIDLSSArguments
 		NVSDK_NGX_DLSS_Create_Params DlssCreateParams = InArguments.GetNGXDLSSCreateParams();
 		NVSDK_NGX_Handle* NewNGXFeatureHandle = nullptr;
 
+		const uint32 CreationNodeMask = 1 << InArguments.GPUNode;
+		const uint32 VisibilityNodeMask = InArguments.GPUVisibility;
+
 		NVSDK_NGX_Result ResultCreate = NGX_D3D12_CREATE_DLSS_EXT(
 			D3DGraphicsCommandList,
 			CreationNodeMask,
@@ -253,7 +253,7 @@ void FNGXD3D12RHI::ExecuteDLSS(FRHICommandList& CmdList, const FRHIDLSSArguments
 			NewNGXParameterHandle,
 			&DlssCreateParams
 		);
-		checkf(NVSDK_NGX_SUCCEED(ResultCreate), TEXT("NGX_D3D12_CREATE_DLSS_EXT failed! (%u %s), %s"), ResultCreate, GetNGXResultAsString(ResultCreate), *InArguments.GetFeatureDesc().GetDebugDescription());
+		checkf(NVSDK_NGX_SUCCEED(ResultCreate), TEXT("NGX_D3D12_CREATE_DLSS_EXT (CreationNodeMask=0x%x VisibilityNodeMask=0x%x) failed! (%u %s), %s"), CreationNodeMask, VisibilityNodeMask, ResultCreate, GetNGXResultAsString(ResultCreate), *InArguments.GetFeatureDesc().GetDebugDescription());
 		InDLSSState->DLSSFeature = MakeShared<FD3D12NGXDLSSFeature>(NewNGXFeatureHandle, NewNGXParameterHandle, InArguments.GetFeatureDesc(), FrameCounter);
 		RegisterFeature(InDLSSState->DLSSFeature);
 	}
@@ -269,27 +269,27 @@ void FNGXD3D12RHI::ExecuteDLSS(FRHICommandList& CmdList, const FRHIDLSSArguments
 	NVSDK_NGX_D3D12_DLSS_Eval_Params DlssEvalParams;
 	FMemory::Memzero(DlssEvalParams);
 
-	DlssEvalParams.Feature.pInOutput = GetD3D12TextureFromRHITexture(InArguments.OutputColor)->GetResource()->GetResource();
+	DlssEvalParams.Feature.pInOutput = GetD3D12TextureFromRHITexture(InArguments.OutputColor, InArguments.GPUNode)->GetResource()->GetResource();
 	DlssEvalParams.InOutputSubrectBase.X = InArguments.DestRect.Min.X;
 	DlssEvalParams.InOutputSubrectBase.Y = InArguments.DestRect.Min.Y;
 
 	DlssEvalParams.InRenderSubrectDimensions.Width = InArguments.SrcRect.Width();
 	DlssEvalParams.InRenderSubrectDimensions.Height = InArguments.SrcRect.Height();
 
-	DlssEvalParams.Feature.pInColor = GetD3D12TextureFromRHITexture(InArguments.InputColor)->GetResource()->GetResource();
+	DlssEvalParams.Feature.pInColor = GetD3D12TextureFromRHITexture(InArguments.InputColor, InArguments.GPUNode)->GetResource()->GetResource();
 	DlssEvalParams.InColorSubrectBase.X = InArguments.SrcRect.Min.X;
 	DlssEvalParams.InColorSubrectBase.Y = InArguments.SrcRect.Min.Y;
 
-	DlssEvalParams.pInDepth = GetD3D12TextureFromRHITexture(InArguments.InputDepth)->GetResource()->GetResource();
+	DlssEvalParams.pInDepth = GetD3D12TextureFromRHITexture(InArguments.InputDepth, InArguments.GPUNode)->GetResource()->GetResource();
 	DlssEvalParams.InDepthSubrectBase.X = InArguments.SrcRect.Min.X;
 	DlssEvalParams.InDepthSubrectBase.Y = InArguments.SrcRect.Min.Y;
 
-	DlssEvalParams.pInMotionVectors = GetD3D12TextureFromRHITexture(InArguments.InputMotionVectors)->GetResource()->GetResource();
+	DlssEvalParams.pInMotionVectors = GetD3D12TextureFromRHITexture(InArguments.InputMotionVectors, InArguments.GPUNode)->GetResource()->GetResource();
 	// The VelocityCombine pass puts the motion vectors into the top left corner
 	DlssEvalParams.InMVSubrectBase.X = 0;
 	DlssEvalParams.InMVSubrectBase.Y = 0;
 
-	DlssEvalParams.pInExposureTexture = InArguments.bUseAutoExposure ? nullptr : GetD3D12TextureFromRHITexture(InArguments.InputExposure)->GetResource()->GetResource();
+	DlssEvalParams.pInExposureTexture = InArguments.bUseAutoExposure ? nullptr : GetD3D12TextureFromRHITexture(InArguments.InputExposure, InArguments.GPUNode)->GetResource()->GetResource();
 	DlssEvalParams.InPreExposure = InArguments.PreExposure;
 
 	DlssEvalParams.Feature.InSharpness = InArguments.Sharpness;

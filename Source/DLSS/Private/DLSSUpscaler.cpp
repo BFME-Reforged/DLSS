@@ -82,15 +82,34 @@ static TAutoConsoleVariable<int32> CVarNGXDLSSDilateMotionVectors(
 	ECVF_RenderThreadSafe);
 
 static TAutoConsoleVariable<int32> CVarNGXDLSSAutoExposure(
-	TEXT("r.NGX.DLSS.AutoExposure"), 0,
-	TEXT("0: Use the engine-computed exposure value for input images to DLSS (default)\n")
-	TEXT("1: Enable DLSS internal auto-exposure instead of the application provided one - enabling this can alleviate effects such as ghosting in darker scenes.\n"),
+	TEXT("r.NGX.DLSS.AutoExposure"), 1,
+	TEXT("0: Use the engine-computed exposure value for input images to DLSS - in some cases this may reduce artifacts\n")
+	TEXT("1: Enable DLSS internal auto-exposure instead of the application provided one (default)\n"),
 	ECVF_RenderThreadSafe);
 
 static TAutoConsoleVariable<int32> CVarNGXDLSSReleaseMemoryOnDelete(
 	TEXT("r.NGX.DLSS.ReleaseMemoryOnDelete"), 
 	1,
 	TEXT("Enabling/disable releasing DLSS related memory on the NGX side when DLSS features get released.(default=1)"),
+	ECVF_RenderThreadSafe);
+
+
+static TAutoConsoleVariable<int32> CVarNGXDLSSFeatureCreationNode(
+	TEXT("r.NGX.DLSS.FeatureCreationNode"), -1,
+	TEXT("Determines which GPU the DLSS feature is getting created on\n")
+	TEXT("-1: Create on the GPU the command list is getting executed on (default)\n")
+	TEXT(" 0: Create on GPU node 0 \n")
+	TEXT(" 1: Create on GPU node 1 \n"),
+	ECVF_RenderThreadSafe);
+
+
+static TAutoConsoleVariable<int32> CVarNGXDLSSFeatureVisibilityMask(
+	TEXT("r.NGX.DLSS.FeatureVisibilityMask"), -1,
+	TEXT("Determines which GPU the DLSS feature is visible to\n")
+	TEXT("-1: Visible to the GPU the command list is getting executed on (default)\n")
+	TEXT(" 1: visible to GPU node 0 \n")
+	TEXT(" 2:  visible to GPU node 1 \n")
+	TEXT(" 3:  visible to GPU node 0 and GPU node 1\n"),
 	ECVF_RenderThreadSafe);
 
 DECLARE_GPU_STAT(DLSS)
@@ -476,17 +495,23 @@ FDLSSOutputs FDLSSUpscaler::AddDLSSPass(
 			PassParameters->EyeAdaptation->MarkResourceAsUsed();
 			DLSSArguments.InputExposure = PassParameters->EyeAdaptation->GetRHI();
 			DLSSArguments.PreExposure = PreExposure;
+			DLSSArguments.bUseAutoExposure = bUseAutoExposure;
 			
-
 			// output images
 			check(PassParameters->SceneColorOutput);
 			PassParameters->SceneColorOutput->MarkResourceAsUsed();
 			DLSSArguments.OutputColor = PassParameters->SceneColorOutput->GetRHI();
-			DLSSArguments.bUseAutoExposure = bUseAutoExposure;
+
 			RHICmdList.TransitionResource(ERHIAccess::UAVMask, DLSSArguments.OutputColor);
 			RHICmdList.EnqueueLambda(
-				[LocalNGXRHIExtensions, DLSSArguments, DLSSState](FRHICommandListImmediate& Cmd)
+				[LocalNGXRHIExtensions, DLSSArguments, DLSSState](FRHICommandListImmediate& Cmd) mutable
 			{
+				const uint32 FeatureCreationNode = CVarNGXDLSSFeatureCreationNode.GetValueOnRenderThread();
+				const uint32 FeatureVisibilityMask = CVarNGXDLSSFeatureVisibilityMask.GetValueOnRenderThread();
+
+				DLSSArguments.GPUNode = FeatureCreationNode == -1 ? Cmd.GetGPUMask().ToIndex() : FMath::Clamp(FeatureCreationNode, 0u, GNumExplicitGPUsForRendering - 1);
+				DLSSArguments.GPUVisibility = FeatureVisibilityMask == -1 ? Cmd.GetGPUMask().GetNative() : (Cmd.GetGPUMask().All().GetNative() & FeatureVisibilityMask) ;
+
 				LocalNGXRHIExtensions->ExecuteDLSS(Cmd, DLSSArguments, DLSSState);
 			});
 		});

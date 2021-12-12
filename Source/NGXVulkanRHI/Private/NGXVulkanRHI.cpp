@@ -58,10 +58,6 @@ public:
 
 class FNGXVulkanRHI final : public NGXRHI
 {
-	// DLSS_TODO MGPU
-	const int VisibilityNodeMask = 1;
-	const int CreationNodeMask = 1;
-	const int AdapterId = 0;
 
 public:
 	FNGXVulkanRHI(const FNGXRHICreateArguments& Arguments);
@@ -234,6 +230,9 @@ void FNGXVulkanRHI::ExecuteDLSS(FRHICommandList& CmdList, const FRHIDLSSArgument
 		NVSDK_NGX_DLSS_Create_Params DlssCreateParams = InArguments.GetNGXDLSSCreateParams();
 		NVSDK_NGX_Handle* NewNGXHandle = nullptr;
 
+		const uint32 CreationNodeMask = 1 << InArguments.GPUNode;
+		const uint32 VisibilityNodeMask = InArguments.GPUVisibility;
+
 		NVSDK_NGX_Result ResultCreate = NGX_VULKAN_CREATE_DLSS_EXT(
 			VulkanCommandBuffer,
 			CreationNodeMask,
@@ -242,7 +241,7 @@ void FNGXVulkanRHI::ExecuteDLSS(FRHICommandList& CmdList, const FRHIDLSSArgument
 			NewNGXParameterHandle,
 			&DlssCreateParams);
 
-		checkf(NVSDK_NGX_SUCCEED(ResultCreate), TEXT("NGX_VULKAN_CREATE_DLSS failed! (%u %s), %s"), ResultCreate, GetNGXResultAsString(ResultCreate), *InArguments.GetFeatureDesc().GetDebugDescription());
+		checkf(NVSDK_NGX_SUCCEED(ResultCreate), TEXT("NGX_VULKAN_CREATE_DLSS failed! (CreationNodeMask=0x%x VisibilityNodeMask=0x%x) (%u %s), %s"), CreationNodeMask, VisibilityNodeMask, ResultCreate, GetNGXResultAsString(ResultCreate), *InArguments.GetFeatureDesc().GetDebugDescription());
 		InDLSSState->DLSSFeature = MakeShared<FVulkanNGXDLSSFeature>(NewNGXHandle, NewNGXParameterHandle, InArguments.GetFeatureDesc(), FrameCounter);
 		RegisterFeature(InDLSSState->DLSSFeature);
 	}

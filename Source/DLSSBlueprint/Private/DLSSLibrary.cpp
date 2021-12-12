@@ -42,11 +42,9 @@ UDLSSSupport UDLSSLibrary::DLSSSupport = UDLSSSupport::NotSupportedByPlatformAtB
 #if WITH_DLSS
 int32 UDLSSLibrary::MinDLSSDriverVersionMajor = 0;
 int32 UDLSSLibrary::MinDLSSDriverVersionMinor = 0;
-#endif
-
-#if WITH_DLSS
 
 FDLSSUpscaler* UDLSSLibrary::DLSSUpscaler = nullptr;
+bool UDLSSLibrary::bDLSSLibraryInitialized = false;
 
 static bool ShowDLSSSDebugOnScreenMessages()
 {
@@ -83,11 +81,11 @@ void UDLSSLibrary::GetDLSSOnScreenMessages(TMultiMap<FCoreDelegates::EOnScreenMe
 		// Checking for "contains" in case virtualization is changing the GPU string
 		const bool bIsNVIDIA =  FWindowsPlatformMisc::GetPrimaryGPUBrand().Contains(TEXT("NVIDIA"));
 	
-		if (bIsNVIDIA && (UDLSSSupport::Supported != QueryDLSSSupport()))
+		if (bIsNVIDIA && (UDLSSSupport::Supported != DLSSSupport))
 		{
 			const FTextFormat Format(LOCTEXT("DLSSOnScreenDebugDLSSNotSupported",
 				"DLSS Information: DLSS is not supported due to {0}. Please see the various LogDLSS* categories in the Developer Tools -> Output Log for further detail."));
-			const FText Message = FText::Format(Format, StaticEnum<UDLSSSupport>()->GetDisplayNameTextByValue(int64(QueryDLSSSupport())));
+			const FText Message = FText::Format(Format, StaticEnum<UDLSSSupport>()->GetDisplayNameTextByValue(int64(DLSSSupport)));
 			OutMessages.Add(FCoreDelegates::EOnScreenMessageSeverity::Warning, Message);
 		}
 
@@ -145,7 +143,12 @@ bool UDLSSLibrary::IsDLSSModeSupported(UDLSSMode DLSSMode)
 			return true;
 		}
 #if WITH_DLSS
-		else if (!IsDLSSSupported())
+		if (!TryInitDLSSLibrary())
+		{
+			UE_LOG(LogDLSSBlueprint, Error, TEXT("IsDLSSModeSupported should not be called before PostEngineInit"));
+			return false;
+		}
+		if (!IsDLSSSupported())
 		{
 			return false;
 		}
@@ -182,6 +185,14 @@ void UDLSSLibrary::GetDLSSModeInformation(UDLSSMode DLSSMode, FVector2D ScreenRe
 	MinScreenPercentage = 100.0f * ITemporalUpscaler::GetDefaultTemporalUpscaler()->GetMinUpsampleResolutionFraction();
 	MaxScreenPercentage = 100.0f * ITemporalUpscaler::GetDefaultTemporalUpscaler()->GetMaxUpsampleResolutionFraction();
 	OptimalSharpness = 0.0f;
+#if WITH_DLSS
+	if (!TryInitDLSSLibrary())
+	{
+		UE_LOG(LogDLSSBlueprint, Error, TEXT("GetDLSSModeInformation should not be called before PostEngineInit"));
+		bIsSupported = false;
+		return;
+	}
+#endif
 	bIsSupported = IsDLSSModeSupported(DLSSMode);
 
 #if WITH_DLSS
@@ -219,6 +230,14 @@ void UDLSSLibrary::GetDLSSModeInformation(UDLSSMode DLSSMode, FVector2D ScreenRe
 void UDLSSLibrary::GetDLSSScreenPercentageRange(float& MinScreenPercentage, float& MaxScreenPercentage)
 {
 #if WITH_DLSS
+	if (!TryInitDLSSLibrary())
+	{
+		UE_LOG(LogDLSSBlueprint, Error, TEXT("GetDLSSScreenPercentageRange should not be called before PostEngineInit"));
+		MinScreenPercentage = 100.0f;
+		MaxScreenPercentage = 100.0f;
+		return;
+	}
+
 	if (IsDLSSSupported())
 	{
 		MinScreenPercentage = 100.0f * DLSSUpscaler->GetMinUpsampleResolutionFraction();
@@ -235,6 +254,13 @@ void UDLSSLibrary::GetDLSSScreenPercentageRange(float& MinScreenPercentage, floa
 TArray<UDLSSMode> UDLSSLibrary::GetSupportedDLSSModes()
 {
 	TArray<UDLSSMode> SupportedQualityModes;
+#if WITH_DLSS
+	if (!TryInitDLSSLibrary())
+	{
+		UE_LOG(LogDLSSBlueprint, Error, TEXT("GetSupportedDLSSModes should not be called before PostEngineInit"));
+		return SupportedQualityModes;
+	}
+#endif
 	{
 		const UEnum* Enum = StaticEnum<UDLSSMode>();
 		for (int32 EnumIndex = 0; EnumIndex < Enum->NumEnums(); ++EnumIndex)
@@ -256,6 +282,12 @@ TArray<UDLSSMode> UDLSSLibrary::GetSupportedDLSSModes()
 bool UDLSSLibrary::IsDLSSSupported()
 {
 #if WITH_DLSS
+	if (!TryInitDLSSLibrary())
+	{
+		UE_LOG(LogDLSSBlueprint, Error, TEXT("IsDLSSSupported should not be called before PostEngineInit"));
+		return false;
+	}
+
 	return QueryDLSSSupport() == UDLSSSupport::Supported;
 #else
 	return false;
@@ -264,12 +296,23 @@ bool UDLSSLibrary::IsDLSSSupported()
 
 UDLSSSupport UDLSSLibrary::QueryDLSSSupport()
 {
+#if WITH_DLSS
+	if (!TryInitDLSSLibrary())
+	{
+		UE_LOG(LogDLSSBlueprint, Error, TEXT("QueryDLSSSupport should not be called before PostEngineInit"));
+		return UDLSSSupport::NotSupported;
+	}
+#endif
 	return DLSSSupport;
 }
 
-void  UDLSSLibrary::GetDLSSMinimumDriverVersion(int32& MinDriverVersionMajor, int32& MinDriverVersionMinor)
+void UDLSSLibrary::GetDLSSMinimumDriverVersion(int32& MinDriverVersionMajor, int32& MinDriverVersionMinor)
 {
 #if WITH_DLSS
+	if (!TryInitDLSSLibrary())
+	{
+		UE_LOG(LogDLSSBlueprint, Error, TEXT("GetDLSSMinimumDriverVersion should not be called before PostEngineInit"));
+	}
 	MinDriverVersionMajor = MinDLSSDriverVersionMajor;
 	MinDriverVersionMinor = MinDLSSDriverVersionMinor;
 #else
@@ -281,6 +324,12 @@ void  UDLSSLibrary::GetDLSSMinimumDriverVersion(int32& MinDriverVersionMajor, in
 void UDLSSLibrary::SetDLSSMode(UDLSSMode DLSSMode)
 {
 #if WITH_DLSS
+	if (!TryInitDLSSLibrary())
+	{
+		UE_LOG(LogDLSSBlueprint, Error, TEXT("SetDLSSMode should not be called before PostEngineInit"));
+		return;
+	}
+
 	const UEnum* Enum = StaticEnum<UDLSSMode>();
 
 	// UEnums are strongly typed, but then one can also cast a byte to an UEnum ...
@@ -331,6 +380,12 @@ void UDLSSLibrary::SetDLSSMode(UDLSSMode DLSSMode)
 UDLSSMode UDLSSLibrary::GetDLSSMode()
 {
 #if WITH_DLSS
+	if (!TryInitDLSSLibrary())
+	{
+		UE_LOG(LogDLSSBlueprint, Error, TEXT("GetDLSSMode should not be called before PostEngineInit"));
+		return UDLSSMode::Off;
+	}
+
 	static const auto CVarNGXEnable = IConsoleManager::Get().FindConsoleVariable(TEXT("r.NGX.Enable"));
 	bool bNGXEnabled = CVarNGXEnable && CVarNGXEnable->GetInt();
 
@@ -379,6 +434,12 @@ UDLSSMode UDLSSLibrary::GetDLSSMode()
 void UDLSSLibrary::SetDLSSSharpness(float Sharpness)
 {
 #if WITH_DLSS
+	if (!TryInitDLSSLibrary())
+	{
+		UE_LOG(LogDLSSBlueprint, Error, TEXT("SetDLSSSharpness should not be called before PostEngineInit"));
+		return;
+	}
+
 	static const auto CVarNGXDLSSharpness = IConsoleManager::Get().FindConsoleVariable(TEXT("r.NGX.DLSS.Sharpness"));
 	
 	if (CVarNGXDLSSharpness)
@@ -394,6 +455,12 @@ void UDLSSLibrary::SetDLSSSharpness(float Sharpness)
 float UDLSSLibrary::GetDLSSSharpness()
 {
 #if WITH_DLSS
+	if (!TryInitDLSSLibrary())
+	{
+		UE_LOG(LogDLSSBlueprint, Error, TEXT("GetDLSSSharpness should not be called before PostEngineInit"));
+		return 0.0f;
+	}
+
 	static const auto CVarNGXDLSSharpness = IConsoleManager::Get().FindConsoleVariable(TEXT("r.NGX.DLSS.Sharpness"));
 	
 	if (CVarNGXDLSSharpness)
@@ -407,6 +474,13 @@ float UDLSSLibrary::GetDLSSSharpness()
 
 UDLSSMode UDLSSLibrary::GetDefaultDLSSMode()
 {
+#if WITH_DLSS
+	if (!TryInitDLSSLibrary())
+	{
+		UE_LOG(LogDLSSBlueprint, Error, TEXT("GetDefaultDLSSMode should not be called before PostEngineInit"));
+		return UDLSSMode::Off;
+	}
+#endif
 	if (UDLSSLibrary::IsDLSSSupported())
 	{
 		return UDLSSMode::Auto;
@@ -443,26 +517,44 @@ static UDLSSSupport ToUDLSSSupport(EDLSSSupport InDLSSSupport)
 			return UDLSSSupport::NotSupportedOperatingSystemOutOfDate;
 	}
 }
+
+// Delayed initialization, which allows this module to be available early so blueprints can be loaded before DLSS is available in PostEngineInit
+bool UDLSSLibrary::TryInitDLSSLibrary()
+{
+	if (bDLSSLibraryInitialized)
+	{
+		return true;
+	}
+
+	IDLSSModuleInterface* DLSSModule = FModuleManager::GetModulePtr<IDLSSModuleInterface>(TEXT("DLSS"));
+	if (DLSSModule == nullptr)
+	{
+		return false;
+	}
+
+	DLSSUpscaler = DLSSModule->GetDLSSUpscaler();
+	DLSSSupport = ToUDLSSSupport(DLSSModule->QueryDLSSSupport());
+	DLSSModule->GetDLSSMinDriverVersion(MinDLSSDriverVersionMajor, MinDLSSDriverVersionMinor);
+
+#if !UE_BUILD_SHIPPING
+	DLSSOnScreenMessagesDelegateHandle = FCoreDelegates::OnGetOnScreenMessages.AddStatic(&GetDLSSOnScreenMessages);
 #endif
+
+	checkf((DLSSModule->GetDLSSUpscaler() != nullptr) || (DLSSModule->QueryDLSSSupport() != EDLSSSupport::Supported), TEXT("mismatch between not having a valid DLSSModule->GetDLSSUpscaler() while also reporting DLSS as being supported by DLSSModule->QueryDLSSSupport() %u "), DLSSModule->QueryDLSSSupport());
+
+	bDLSSLibraryInitialized = true;
+
+	return true;
+}
+#endif // WITH_DLSS
 
 void FDLSSBlueprintModule::StartupModule()
 {
 #if WITH_DLSS
-	IDLSSModuleInterface* DLSSModule = &FModuleManager::LoadModuleChecked<IDLSSModuleInterface>(TEXT("DLSS"));
-
-	check(DLSSModule);
-
-	UDLSSLibrary::DLSSUpscaler = DLSSModule->GetDLSSUpscaler();
-	UDLSSLibrary::DLSSSupport = ToUDLSSSupport(DLSSModule->QueryDLSSSupport());
-	DLSSModule->GetDLSSMinDriverVersion(UDLSSLibrary::MinDLSSDriverVersionMajor, UDLSSLibrary::MinDLSSDriverVersionMinor);
-
-#if !UE_BUILD_SHIPPING
-	UDLSSLibrary::DLSSOnScreenMessagesDelegateHandle = FCoreDelegates::OnGetOnScreenMessages.AddStatic(&UDLSSLibrary::GetDLSSOnScreenMessages);
-#endif
-
-	checkf((DLSSModule->GetDLSSUpscaler() != nullptr) || (DLSSModule->QueryDLSSSupport() != EDLSSSupport::Supported), TEXT("mismatch between not having a valid DLSSModule->GetDLSSUpscaler() while also reporting DLSS as being supported by DLSSModule->QueryDLSSSupport() %u "), DLSSModule->QueryDLSSSupport());
+	// This initialization will likely not succeed unless this module has been moved to PostEngineInit, and that's ok
+	UDLSSLibrary::TryInitDLSSLibrary();
 #else
-	UE_LOG(LogDLSSBlueprint, Log, TEXT("DLSS is not supported on this platform at build time. The DLSS Blueprint library however is supported and stubbed out to ignore any calls to enable DLSS and will always return UDLSSSupport::NotSupportedByPlatformAtBuildTime, regardless of the underlying hardware. This can be used to e.g. to turn of DLSS related UI elements."));
+	UE_LOG(LogDLSSBlueprint, Log, TEXT("DLSS is not supported on this platform at build time. The DLSS Blueprint library however is supported and stubbed out to ignore any calls to enable DLSS and will always return UDLSSSupport::NotSupportedByPlatformAtBuildTime, regardless of the underlying hardware. This can be used to e.g. to turn off DLSS related UI elements."));
 	UDLSSLibrary::DLSSSupport = UDLSSSupport::NotSupportedByPlatformAtBuildTime;
 #endif
 }

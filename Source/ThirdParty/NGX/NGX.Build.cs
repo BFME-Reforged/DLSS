@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2020 NVIDIA CORPORATION.  All rights reserved.
+* Copyright (c) 2020-2021 NVIDIA CORPORATION.  All rights reserved.
 *
 * NVIDIA Corporation and its licensors retain all intellectual property and proprietary
 * rights in and to this software, related documentation and any modifications thereto.
@@ -17,6 +17,12 @@
 * INABILITY TO USE THIS SOFTWARE, EVEN IF NVIDIA HAS BEEN ADVISED OF THE POSSIBILITY OF
 * SUCH DAMAGES.
 */
+
+#if UE_5_0_OR_LATER
+using EpicGames.Core;
+#else
+using Tools.DotNETCommon;
+#endif
 
 using UnrealBuildTool;
 using System.IO;
@@ -73,7 +79,25 @@ public class NGX : ModuleRules
 
 			foreach (string NGXSnippetDLL in NGXSnippetDLLs)
 			{
-				RuntimeDependencies.Add("$(PluginDir)/Binaries/ThirdParty/Win64/" + NGXSnippetDLL, StagedFileType.NonUFS);
+				bool bHasProjectBinary = false;
+				if (Target.ProjectFile != null)
+				{
+					string ProjectDLLPath = DirectoryReference.Combine(Target.ProjectFile.Directory, "Binaries/ThirdParty/NVIDIA/NGX/Win64", NGXSnippetDLL).FullName;
+					if (File.Exists(ProjectDLLPath))
+					{
+						bHasProjectBinary = true;
+						//Log.TraceInformation("NGX project specific production DLSS binary found at {0}.", ProjectDLLPath);
+						RuntimeDependencies.Add(ProjectDLLPath, StagedFileType.NonUFS);
+					}
+				}
+
+				// useful to have both plugin and project specific binary during testing, but if we have a project specific binary, then we want to ship with only that
+				if (!bHasProjectBinary || Target.Configuration != UnrealTargetConfiguration.Shipping)
+				{
+					RuntimeDependencies.Add("$(PluginDir)/Binaries/ThirdParty/Win64/" + NGXSnippetDLL, StagedFileType.NonUFS);
+				}
+
+				// useful to have debug overlay during testing, but we don't want to ship with that
 				if (Target.Configuration != UnrealTargetConfiguration.Shipping)
 				{
 					RuntimeDependencies.Add("$(PluginDir)/Binaries/ThirdParty/Win64/Development/" + NGXSnippetDLL, StagedFileType.DebugNonUFS);

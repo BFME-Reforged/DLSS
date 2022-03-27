@@ -1,21 +1,12 @@
 /*
-* Copyright (c) 2020 - 2021 NVIDIA CORPORATION.  All rights reserved.
+* Copyright (c) 2020 - 2022 NVIDIA CORPORATION.  All rights reserved.
 *
-* NVIDIA Corporation and its licensors retain all intellectual property and proprietary
-* rights in and to this software, related documentation and any modifications thereto.
-* Any use, reproduction, disclosure or distribution of this software and related
-* documentation without an express license agreement from NVIDIA Corporation is strictly
-* prohibited.
-*
-* TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, THIS SOFTWARE IS PROVIDED *AS IS*
-* AND NVIDIA AND ITS SUPPLIERS DISCLAIM ALL WARRANTIES, EITHER EXPRESS OR IMPLIED,
-* INCLUDING, BUT NOT LIMITED TO, IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
-* PARTICULAR PURPOSE.  IN NO EVENT SHALL NVIDIA OR ITS SUPPLIERS BE LIABLE FOR ANY
-* SPECIAL, INCIDENTAL, INDIRECT, OR CONSEQUENTIAL DAMAGES WHATSOEVER (INCLUDING, WITHOUT
-* LIMITATION, DAMAGES FOR LOSS OF BUSINESS PROFITS, BUSINESS INTERRUPTION, LOSS OF
-* BUSINESS INFORMATION, OR ANY OTHER PECUNIARY LOSS) ARISING OUT OF THE USE OF OR
-* INABILITY TO USE THIS SOFTWARE, EVEN IF NVIDIA HAS BEEN ADVISED OF THE POSSIBILITY OF
-* SUCH DAMAGES.
+* NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
+* property and proprietary rights in and to this material, related
+* documentation and any modifications thereto. Any use, reproduction,
+* disclosure or distribution of this material and related documentation
+* without an express license agreement from NVIDIA CORPORATION or
+* its affiliates is strictly prohibited.
 */
 #include "DLSS.h"
 #include "CoreMinimal.h"
@@ -170,7 +161,7 @@ void FDLSSModule::StartupModule()
 	UE_LOG(LogDLSS, Log, TEXT("%s Enter"), ANSI_TO_TCHAR(__FUNCTION__));
 
 	// Get the base directory of this plugin
-	const FString PluginBaseDir = IPluginManager::Get().FindPlugin("DLSS")->GetBaseDir();
+	const FString PluginBaseDir = IPluginManager::Get().FindPlugin(TEXT("DLSS"))->GetBaseDir();
 	const FString NGXBinariesDir = FPaths::Combine(*PluginBaseDir, TEXT("Binaries/ThirdParty/Win64/"));
 	const FString RHIName = GDynamicRHI->GetName();
 
@@ -295,7 +286,8 @@ void FDLSSModule::StartupModule()
 
 			const bool bRenderDocPluginFound = FModuleManager::Get().ModuleExists(TEXT("RenderDocPlugin"));
 			const bool bDLSSUnavailable = (!NGXRHIExtensions || !NGXRHIExtensions->IsDLSSAvailable());
-			if (bDLSSUnavailable && (bRenderDocPluginFound || NGXRHI::IsIncompatibleAPICaptureToolActive()))
+			const bool bIncompatibleAPICaptureToolActive = (bRenderDocPluginFound || NGXRHI::IsIncompatibleAPICaptureToolActive());
+			if (bDLSSUnavailable && bIncompatibleAPICaptureToolActive)
 			{
 				if (bRenderDocPluginFound)
 				{
@@ -341,17 +333,21 @@ void FDLSSModule::StartupModule()
 				else
 				{
 					// map some of the NGX error codes to something that the UI/gameplay could suggest the end user to do something about
-					switch (NGXRHIExtensions->GetDLSSInitResult())
+					if (bIncompatibleAPICaptureToolActive)
 					{
-						case NVSDK_NGX_Result_FAIL_OutOfDate:
-							DLSSSupport = EDLSSSupport::NotSupportedDriverOutOfDate;
-							break;
-						case NVSDK_NGX_Result_FAIL_FeatureNotSupported:
-							DLSSSupport = EDLSSSupport::NotSupportedIncompatibleHardware;
-							break;
-					
-						default:
-							DLSSSupport = EDLSSSupport::NotSupported;
+						DLSSSupport = EDLSSSupport::NotSupportedIncompatibleAPICaptureToolActive;
+					}
+					else if (NVSDK_NGX_Result_FAIL_OutOfDate == NGXRHIExtensions->GetDLSSInitResult())
+					{
+						DLSSSupport = EDLSSSupport::NotSupportedDriverOutOfDate;
+					} 
+					else if (NVSDK_NGX_Result_FAIL_FeatureNotSupported == NGXRHIExtensions->GetDLSSInitResult())
+					{
+						DLSSSupport = EDLSSSupport::NotSupportedIncompatibleHardware;
+					}
+					else
+					{
+						DLSSSupport =  EDLSSSupport::NotSupported;
 					}
 				}
 
@@ -404,11 +400,13 @@ void FDLSSModule::StartupModule()
 				DLSSUpscaler.Reset();
 				NGXRHIExtensions.Reset();
 			}
+#if DLSS_ENGINE_HAS_GTEMPORALUPSCALER
 			else
 			{
 				checkf(GTemporalUpscaler == ITemporalUpscaler::GetDefaultTemporalUpscaler(), TEXT("GTemporalUpscaler is not set to the default upscaler. Please check that only one upscaling plugin is active."));
 				GTemporalUpscaler = DLSSUpscaler.Get();
 			}
+#endif
 		}
 	}
 
@@ -483,7 +481,9 @@ void FDLSSModule::ShutdownModule()
 
 		// reset the upscaler
 		{
+#if DLSS_ENGINE_HAS_GTEMPORALUPSCALER
 			GTemporalUpscaler = ITemporalUpscaler::GetDefaultTemporalUpscaler();
+#endif
 			FDLSSUpscaler::ReleaseStaticResources();
 			DLSSUpscaler.Reset();
 		}

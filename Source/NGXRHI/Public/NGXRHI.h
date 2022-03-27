@@ -24,7 +24,7 @@
 
 #include "CoreMinimal.h"
 #include "RendererInterface.h"
-
+#include "Runtime/Launch/Resources/Version.h"
 
 #include "nvsdk_ngx_params.h"
 
@@ -103,9 +103,13 @@ struct NGXRHI_API FRHIDLSSArguments
 
 	FIntRect SrcRect = FIntRect(FIntPoint::ZeroValue, FIntPoint::ZeroValue);
 	FIntRect DestRect = FIntRect(FIntPoint::ZeroValue, FIntPoint::ZeroValue);
-
+#if ENGINE_MAJOR_VERSION < 5
 	FVector2D JitterOffset= FVector2D::ZeroVector;
 	FVector2D MotionVectorScale{ 1.0f,1.0f };
+#else
+	FVector2f JitterOffset = FVector2f::ZeroVector;
+	FVector2f MotionVectorScale = FVector2f::UnitVector;
+#endif
 	bool bHighResolutionMotionVectors = false;
 
 	float Sharpness = 0.0f;

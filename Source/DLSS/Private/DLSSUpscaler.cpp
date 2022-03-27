@@ -1,21 +1,12 @@
 /*
-* Copyright (c) 2020 NVIDIA CORPORATION.  All rights reserved.
+* Copyright (c) 2020 - 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 *
-* NVIDIA Corporation and its licensors retain all intellectual property and proprietary
-* rights in and to this software, related documentation and any modifications thereto.
-* Any use, reproduction, disclosure or distribution of this software and related
-* documentation without an express license agreement from NVIDIA Corporation is strictly
-* prohibited.
-*
-* TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, THIS SOFTWARE IS PROVIDED *AS IS*
-* AND NVIDIA AND ITS SUPPLIERS DISCLAIM ALL WARRANTIES, EITHER EXPRESS OR IMPLIED,
-* INCLUDING, BUT NOT LIMITED TO, IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
-* PARTICULAR PURPOSE.  IN NO EVENT SHALL NVIDIA OR ITS SUPPLIERS BE LIABLE FOR ANY
-* SPECIAL, INCIDENTAL, INDIRECT, OR CONSEQUENTIAL DAMAGES WHATSOEVER (INCLUDING, WITHOUT
-* LIMITATION, DAMAGES FOR LOSS OF BUSINESS PROFITS, BUSINESS INTERRUPTION, LOSS OF
-* BUSINESS INFORMATION, OR ANY OTHER PECUNIARY LOSS) ARISING OUT OF THE USE OF OR
-* INABILITY TO USE THIS SOFTWARE, EVEN IF NVIDIA HAS BEEN ADVISED OF THE POSSIBILITY OF
-* SUCH DAMAGES.
+* NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
+* property and proprietary rights in and to this material, related
+* documentation and any modifications thereto. Any use, reproduction,
+* disclosure or distribution of this material and related documentation
+* without an express license agreement from NVIDIA CORPORATION or
+* its affiliates is strictly prohibited.
 */
 
 #include "DLSSUpscaler.h"
@@ -37,13 +28,20 @@
 #include "LegacyScreenPercentageDriver.h"
 
 
-
 #define LOCTEXT_NAMESPACE "FDLSSModule"
 
+#ifndef SUPPORTS_POSTPROCESSING_SCREEN_PERCENTAGE
+#define SUPPORTS_POSTPROCESSING_SCREEN_PERCENTAGE 1
+#endif
 
 static TAutoConsoleVariable<int32> CVarNGXDLSSEnable(
 	TEXT("r.NGX.DLSS.Enable"), 1,
 	TEXT("Enable/Disable DLSS entirely."),
+	ECVF_RenderThreadSafe);
+
+static TAutoConsoleVariable<bool> CVarNGXDLAAEnable(
+	TEXT("r.NGX.DLAA.Enable"), false,
+	TEXT("Enable/Disable DLAA"),
 	ECVF_RenderThreadSafe);
 
 static TAutoConsoleVariable<int32> CVarNGXDLSSAutomationTesting(
@@ -225,6 +223,11 @@ bool FDLSSUpscaler::IsAutoQualityMode()
 	return CVarNGXDLSSAutoQualitySetting.GetValueOnAnyThread();
 }
 
+bool FDLSSUpscaler::IsDLAAMode()
+{
+	return CVarNGXDLAAEnable.GetValueOnAnyThread();
+}
+
 void FDLSSUpscaler::SetAutoQualityMode(bool bAutoQualityMode)
 {
 	check(IsInGameThread());
@@ -307,17 +310,26 @@ void FDLSSUpscaler::ReleaseStaticResources()
 	UE_LOG(LogDLSS, Log, TEXT("%s Leave"), ANSI_TO_TCHAR(__FUNCTION__));
 }
 
+#if DLSS_ENGINE_ADDPASSES_RETURN_THROUGH_PARAMS
 void FDLSSUpscaler::AddPasses(
+#else
+ITemporalUpscaler::FOutputs FDLSSUpscaler::AddPasses(
+#endif
 	FRDGBuilder& GraphBuilder,
 	const FViewInfo& View,
-	const FPassInputs& PassInputs,
-	FRDGTextureRef* OutSceneColorTexture,
-	FIntRect* OutSceneColorViewRect,
-	FRDGTextureRef* OutSceneColorHalfResTexture,
-	FIntRect* OutSceneColorHalfResViewRect) const
+	const FPassInputs& PassInputs
+#if DLSS_ENGINE_ADDPASSES_RETURN_THROUGH_PARAMS
+	, FRDGTextureRef* OutSceneColorTexture
+	, FIntRect* OutSceneColorViewRect
+	, FRDGTextureRef* OutSceneColorHalfResTexture
+	, FIntRect* OutSceneColorHalfResViewRect
+#endif
+) const
 {
+#if ENGINE_MAJOR_VERSION < 5
 	// For TAAU, this can happen with screen percentages larger than 100%, so not something that DLSS viewports are setup with
 	checkf(!PassInputs.bAllowDownsampleSceneColor,TEXT("The DLSS plugin does not support downsampling the scenecolor. Please set r.TemporalAA.AllowDownsampling=0"));
+#endif
 	checkf(View.PrimaryScreenPercentageMethod == EPrimaryScreenPercentageMethod::TemporalUpscale, TEXT("DLSS requires TemporalUpscale. If you hit this assert, please set r.TemporalAA.Upscale=1"));
 
 
@@ -332,6 +344,9 @@ void FDLSSUpscaler::AddPasses(
 	
 	FDLSSPassParameters DLSSParameters(View);
 	const FIntRect SecondaryViewRect = DLSSParameters.OutputViewRect;
+#if !DLSS_ENGINE_ADDPASSES_RETURN_THROUGH_PARAMS
+	ITemporalUpscaler::FOutputs Outputs;
+#endif
 	{
 		RDG_GPU_STAT_SCOPE(GraphBuilder, DLSS);
 		RDG_EVENT_SCOPE(GraphBuilder, "DLSS");
@@ -354,6 +369,7 @@ void FDLSSUpscaler::AddPasses(
 			OutputCustomHistory
 		);
 
+#if DLSS_ENGINE_ADDPASSES_RETURN_THROUGH_PARAMS
 		FRDGTextureRef SceneColorTexture = DLSSOutputs.SceneColor;
 
 		*OutSceneColorTexture = SceneColorTexture;
@@ -361,7 +377,14 @@ void FDLSSUpscaler::AddPasses(
 
 		*OutSceneColorHalfResTexture = nullptr;
 		*OutSceneColorHalfResViewRect = FIntRect(FIntPoint::ZeroValue, FIntPoint::ZeroValue);
+#else
+		Outputs.FullRes.Texture = DLSSOutputs.SceneColor;
+		Outputs.FullRes.ViewRect = SecondaryViewRect;
+#endif
 	}
+#if !DLSS_ENGINE_ADDPASSES_RETURN_THROUGH_PARAMS
+	return Outputs;
+#endif
 }
 
 FDLSSOutputs FDLSSUpscaler::AddDLSSPass(
@@ -440,7 +463,11 @@ FDLSSOutputs FDLSSUpscaler::AddDLSSPass(
 		}
 
 		const FVector2D JitterOffset = View.TemporalJitterPixels;
+#if ENGINE_MAJOR_VERSION < 5
 		const float DeltaWorldTime = View.Family->DeltaWorldTime;
+#else
+		const float DeltaWorldTime = View.Family->Time.GetDeltaWorldTimeSeconds();
+#endif
 
 		const float PreExposure = View.PreExposure;
 		const bool bUseAutoExposure = CVarNGXDLSSAutoExposure.GetValueOnRenderThread() != 0;
@@ -469,9 +496,17 @@ FDLSSOutputs FDLSSUpscaler::AddDLSSPass(
 
 			DLSSArguments.Sharpness = Sharpness;
 			DLSSArguments.bReset = bCameraCut;
-			DLSSArguments.JitterOffset = JitterOffset;
 
+
+#if ENGINE_MAJOR_VERSION < 5
+			DLSSArguments.JitterOffset = JitterOffset;
 			DLSSArguments.MotionVectorScale = FVector2D(1.0f, 1.0f);
+#else
+			DLSSArguments.JitterOffset = FVector2f(JitterOffset);	// LWC_TODO: Precision loss
+			DLSSArguments.MotionVectorScale = FVector2f::UnitVector;
+
+#endif ENGINE_MAJOR_VERSION
+
 			DLSSArguments.bHighResolutionMotionVectors = Inputs.bHighResolutionMotionVectors;
 			DLSSArguments.DeltaTime = DeltaWorldTime;
 			DLSSArguments.bReleaseMemoryOnDelete = bReleaseMemoryOnDelete;
@@ -558,9 +593,14 @@ bool FDLSSUpscaler::IsQualityModeSupported(EDLSSQualityMode InQualityMode) const
 bool FDLSSUpscaler::IsDLSSActive() const
 {
 	static const auto CVarTemporalAAUpscaler = IConsoleManager::Get().FindConsoleVariable(TEXT("r.TemporalAA.Upscaler"));
-	const bool bDLSSActive = ((GTemporalUpscaler == this) || IsValidUpscalerInstance(this)) &&
+	const bool bDLSSActive =
+#if DLSS_ENGINE_HAS_GTEMPORALUPSCALER
+		((GTemporalUpscaler == this) || IsValidUpscalerInstance(this)) &&
+#else
+		((GCustomStaticScreenPercentage == this) || IsValidUpscalerInstance(this)) &&
+#endif
 		CVarTemporalAAUpscaler && (CVarTemporalAAUpscaler->GetInt() != 0) &&
-		(CVarNGXDLSSEnable.GetValueOnAnyThread() != 0);
+		((CVarNGXDLSSEnable.GetValueOnAnyThread() != 0) || CVarNGXDLAAEnable.GetValueOnAnyThread());
 	return bDLSSActive;
 }
 
@@ -571,13 +611,20 @@ void FDLSSUpscaler::SetupMainGameViewFamily(FSceneViewFamily& ViewFamily)
 	
 	if (IsDLSSActive() && bDLSSActiveWithAutomation)
 	{
+#if DLSS_ENGINE_HAS_GTEMPORALUPSCALER
 		checkf(GTemporalUpscaler == this, TEXT("GTemporalUpscaler is not set to a DLSS upscaler . Please check that only one upscaling plugin is active."));
+#endif
 		checkf(GCustomStaticScreenPercentage == this, TEXT("GCustomStaticScreenPercentage is not set to a DLSS upscaler. Please check that only one upscaling plugin is active."));
 
 		if (!GIsEditor || (GIsEditor && GIsPlayInEditorWorld && EnableDLSSInPlayInEditorViewports()))
 		{
+			bool bIsDLAAMode = IsDLAAMode();
 			EDLSSQualityMode DLSSQuality;
-			if (IsAutoQualityMode())
+			if (bIsDLAAMode)
+			{
+				DLSSQuality = EDLSSQualityMode::Quality;
+			}
+			else if (IsAutoQualityMode())
 			{
 				TOptional<EDLSSQualityMode> MaybeDLSSQuality = GetAutoQualityModeFromViewFamily(ViewFamily);
 				if (!MaybeDLSSQuality.IsSet())
@@ -598,11 +645,19 @@ void FDLSSUpscaler::SetupMainGameViewFamily(FSceneViewFamily& ViewFamily)
 
 			if (ViewFamily.EngineShowFlags.ScreenPercentage && !ViewFamily.GetScreenPercentageInterface())
 			{
-
-				const float ResolutionFraction = GetOptimalResolutionFractionForQuality(DLSSQuality);
+				// DLSS uses recommended resolution fraction, DLAA forces a 1.0 scale
+				float ResolutionFraction = 1.0f;
+				if (!bIsDLAAMode)
+				{
+					ResolutionFraction = GetOptimalResolutionFractionForQuality(DLSSQuality);
+				}
 				ViewFamily.SetScreenPercentageInterface(new FLegacyScreenPercentageDriver(
-					ViewFamily, ResolutionFraction,
-					/* AllowPostProcessSettingsScreenPercentage = */  false));
+					ViewFamily, ResolutionFraction
+#if SUPPORTS_POSTPROCESSING_SCREEN_PERCENTAGE					
+					/* AllowPostProcessSettingsScreenPercentage = */ , false
+#endif
+				
+				));
 			}
 		}
 	}
@@ -615,6 +670,11 @@ void FDLSSUpscaler::SetupViewFamily(FSceneViewFamily& ViewFamily, TSharedPtr<ICu
 	TSharedPtr<FDLSSViewportQualitySetting> ScreenPercentageData = StaticCastSharedPtr<FDLSSViewportQualitySetting>(InScreenPercentageDataInterface);
 	
 	EDLSSQualityMode Quality = static_cast<EDLSSQualityMode>(ScreenPercentageData->QualitySetting);
+	const bool bIsDLAAMode = ScreenPercentageData->bDLAAEnabled;
+	if (bIsDLAAMode)
+	{
+		Quality = EDLSSQualityMode::Quality;
+	}
 	if (!IsQualityModeSupported(Quality))
 	{
 		UE_LOG(LogDLSS, Warning, TEXT("DLSS Quality mode is not supported %d"), Quality);
@@ -623,17 +683,22 @@ void FDLSSUpscaler::SetupViewFamily(FSceneViewFamily& ViewFamily, TSharedPtr<ICu
 	const bool bDLSSActiveWithAutomation = !GIsAutomationTesting || (GIsAutomationTesting && (CVarNGXDLSSAutomationTesting.GetValueOnAnyThread() != 0));
 	if (IsDLSSActive() && bDLSSActiveWithAutomation)
 	{
+#if DLSS_ENGINE_HAS_GTEMPORALUPSCALER
 		checkf(GTemporalUpscaler == this, TEXT("GTemporalUpscaler is not set to a DLSS upscaler . Please check that only one upscaling plugin is active."));
+#endif
 		checkf(GCustomStaticScreenPercentage == this, TEXT("GCustomStaticScreenPercentage is not set to a DLSS upscaler. Please check that only one upscaling plugin is active."));
 
 		ViewFamily.SetTemporalUpscalerInterface(GetUpscalerInstanceForViewFamily(this, Quality));
 
 		if (ViewFamily.EngineShowFlags.ScreenPercentage && !ViewFamily.GetScreenPercentageInterface())
 		{
-			const float ResolutionFraction = GetOptimalResolutionFractionForQuality(Quality);
+			const float ResolutionFraction = bIsDLAAMode ? 1.0f : GetOptimalResolutionFractionForQuality(Quality);
 			ViewFamily.SetScreenPercentageInterface(new FLegacyScreenPercentageDriver(
-				ViewFamily, ResolutionFraction,
-				/* AllowPostProcessSettingsScreenPercentage = */  false));
+				ViewFamily, ResolutionFraction
+				#if SUPPORTS_POSTPROCESSING_SCREEN_PERCENTAGE					
+					/* AllowPostProcessSettingsScreenPercentage = */ , false
+				#endif
+				));
 		}
 	}
 }

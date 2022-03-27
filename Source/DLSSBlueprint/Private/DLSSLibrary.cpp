@@ -35,6 +35,17 @@
 #define LOCTEXT_NAMESPACE "FDLSSBlueprintModule"
 DEFINE_LOG_CATEGORY_STATIC(LogDLSSBlueprint, Log, All);
 
+static TAutoConsoleVariable<int32> CVarNGXDLSSPreferNISSharpen(
+	TEXT("r.NGX.DLSS.PreferNISSharpen"),
+	2,
+	TEXT("Prefer sharpening with an extra NIS plugin sharpening pass instead of DLSS sharpening if the NIS plugin is also enabled for the project. (default: true)\n")
+	TEXT("Requires UE4.27.1 and the NIS plugin to be enabled, DLSS sharpening will be used otherwise \n")
+	TEXT("   0: Softening/sharpening with the DLSS pass.\n")
+	TEXT("   1: Sharpen with the NIS plugin. Softening is not supported. Requires the NIS plugin to be enabled.\n")
+	TEXT("   2: Sharpen with the NIS plugin. Softening (i.e. negative sharpness)with the DLSS plugin. Requires the NIS plugin to be enabled.\n")
+	TEXT("Note: This cvar is only evaluated when using the  `SetDLSSSharpness` Blueprint function, from either C++ or a Blueprint event graph!"), 
+	ECVF_RenderThreadSafe);
+
 static const FName SetDLSSModeInvalidEnumValueError= FName("SetDLSSModeInvalidEnumValueError");
 static const FName IsDLSSModeSupportedInvalidEnumValueError = FName("IsDLSSModeSupportedInvalidEnumValueError");
 
@@ -68,8 +79,15 @@ void UDLSSLibrary::GetDLSSOnScreenMessages(TMultiMap<FCoreDelegates::EOnScreenMe
 {
 	check(IsInGameThread());
 
+	// We need a valid DLSSSupport, so calling this here in case other UDLSSLibrary functions which call TryInitDLSSLibrary() haven't been called
+	if (!TryInitDLSSLibrary())
+	{
+		return;
+	}
+
 	if(ShowDLSSSDebugOnScreenMessages())
 	{
+
 		if (DLSSErrorState.bIsDLSSModeUnsupported)
 		{
 			const FTextFormat Format(LOCTEXT("DLSSOnScreenDebugSetModeUnsupportedDLSSMode",
@@ -79,16 +97,22 @@ void UDLSSLibrary::GetDLSSOnScreenMessages(TMultiMap<FCoreDelegates::EOnScreenMe
 		}
 
 		// Checking for "contains" in case virtualization is changing the GPU string
-		const bool bIsNVIDIA =  FWindowsPlatformMisc::GetPrimaryGPUBrand().Contains(TEXT("NVIDIA"));
-	
-		if (bIsNVIDIA && (UDLSSSupport::Supported != DLSSSupport))
+		const bool bIsNVIDIA = FWindowsPlatformMisc::GetPrimaryGPUBrand().Contains(TEXT("NVIDIA"));
+
+		bool bShowNotSupportedMessage = bIsNVIDIA && (UDLSSSupport::Supported != DLSSSupport);
+
+		if ((UDLSSSupport::NotSupportedIncompatibleAPICaptureToolActive == DLSSSupport) && !GetMutableDefault<UDLSSOverrideSettings>()->bShowDLSSIncompatiblePluginsToolsWarnings )
+		{
+			bShowNotSupportedMessage = false;
+		}
+
+		if (bShowNotSupportedMessage)
 		{
 			const FTextFormat Format(LOCTEXT("DLSSOnScreenDebugDLSSNotSupported",
-				"DLSS Information: DLSS is not supported due to {0}. Please see the various LogDLSS* categories in the Developer Tools -> Output Log for further detail."));
+				"DLSS Information: DLSS is not supported due to {0}.Please see the various LogDLSS* categories in the Developer Tools -> Output Log for further detail."));
 			const FText Message = FText::Format(Format, StaticEnum<UDLSSSupport>()->GetDisplayNameTextByValue(int64(DLSSSupport)));
 			OutMessages.Add(FCoreDelegates::EOnScreenMessageSeverity::Warning, Message);
 		}
-
 	}
 }
 #endif
@@ -321,6 +345,54 @@ void UDLSSLibrary::GetDLSSMinimumDriverVersion(int32& MinDriverVersionMajor, int
 #endif
 }
 
+void UDLSSLibrary::EnableDLAA(bool bEnabled)
+{
+#if WITH_DLSS
+	if (!TryInitDLSSLibrary())
+	{
+		UE_LOG(LogDLSSBlueprint, Error, TEXT("EnableDLAA should not be called before PostEngineInit"));
+		return;
+	}
+
+	static const auto CVarNGXEnable = IConsoleManager::Get().FindConsoleVariable(TEXT("r.NGX.Enable"));
+	bool bNGXEnabled = CVarNGXEnable && (CVarNGXEnable->GetInt() != 0);
+
+	static auto CVarDLAAEnable = IConsoleManager::Get().FindConsoleVariable(TEXT("r.NGX.DLAA.Enable"));
+	if (CVarDLAAEnable)
+	{
+		// r.NGX.Enable might be set to 0 via hotfix so disable DLAA too (in case it might come from saved settings)
+		bool bDLAAEnabled = bNGXEnabled && bEnabled;
+		CVarDLAAEnable->Set(bDLAAEnabled, ECVF_SetByCommandline);
+		if (bDLAAEnabled)
+		{
+			// DLAA needs to override the temporal upscaler
+			static const auto CVarUseTemporalAAUpscaler = IConsoleManager::Get().FindConsoleVariable(TEXT("r.TemporalAA.Upscaler"));
+			CVarUseTemporalAAUpscaler->SetWithCurrentPriority(1);
+		}
+	}
+#endif
+}
+
+bool UDLSSLibrary::IsDLAAEnabled()
+{
+#if WITH_DLSS
+	if (!TryInitDLSSLibrary())
+	{
+		UE_LOG(LogDLSSBlueprint, Error, TEXT("IsDLAAEnabled should not be called before PostEngineInit"));
+		return false;
+	}
+
+	static const auto CVarNGXEnable = IConsoleManager::Get().FindConsoleVariable(TEXT("r.NGX.Enable"));
+	const bool bNGXEnabled = CVarNGXEnable && (CVarNGXEnable->GetInt() != 0);
+
+	const bool bDLAAEnabled = (DLSSUpscaler != nullptr) && DLSSUpscaler->IsDLAAMode();
+
+	return bNGXEnabled && bDLAAEnabled;
+#else
+	return false;
+#endif
+}
+
 void UDLSSLibrary::SetDLSSMode(UDLSSMode DLSSMode)
 {
 #if WITH_DLSS
@@ -336,14 +408,23 @@ void UDLSSLibrary::SetDLSSMode(UDLSSMode DLSSMode)
 	if(Enum->IsValidEnumValue(int64(DLSSMode)) && (Enum->GetMaxEnumValue() != int64(DLSSMode)))
 	{
 		static const auto CVarNGXEnable = IConsoleManager::Get().FindConsoleVariable(TEXT("r.NGX.Enable"));
-		bool bNGXEnabled = CVarNGXEnable && CVarNGXEnable->GetInt();
+		const bool bNGXEnabled = CVarNGXEnable && CVarNGXEnable->GetInt();
 
 		static auto CVarDLSSEnable = IConsoleManager::Get().FindConsoleVariable(TEXT("r.NGX.DLSS.Enable"));
 		if (CVarDLSSEnable)
 		{
 			// r.NGX.Enable might be set to 0 via hotfix so set r.NGX.DLSS.Enable to 0 too (in case it might come from saved settings)
-			bool bDLSSEnabled = bNGXEnabled && (DLSSMode != UDLSSMode::Off);
+			const bool bDLSSEnabled = bNGXEnabled && (DLSSMode != UDLSSMode::Off);
 			CVarDLSSEnable->Set(bDLSSEnabled ? 1 : 0, ECVF_SetByCommandline);
+
+			// Spatial upscalers such as NIS might set this to 0, but we need r.TemporalAA.Upscaler to be 1 for DLSS to work.
+			// but we don't want to change the Cvar if DLSS is not active as to avoid impacting other code paths
+			// we don't need to set r.TemporalAA.Upsampling since r.TemporalAA.Upscaler implies that
+			if (bDLSSEnabled)
+			{
+				static const auto CVarTemporalAAUpscaler = IConsoleManager::Get().FindConsoleVariable(TEXT("r.TemporalAA.Upscaler"));
+				CVarTemporalAAUpscaler->Set(1, ECVF_SetByCommandline);
+			}
 		}
 
 		static auto CVarDLSSAutoQualityMode = IConsoleManager::Get().FindConsoleVariable(TEXT("r.NGX.DLSS.Quality.Auto"));
@@ -386,23 +467,32 @@ UDLSSMode UDLSSLibrary::GetDLSSMode()
 		return UDLSSMode::Off;
 	}
 
+	static const auto CVarTemporalAAUpscaler = IConsoleManager::Get().FindConsoleVariable(TEXT("r.TemporalAA.Upscaler"));
+	const bool bTemporalUpscalerActive = CVarTemporalAAUpscaler && CVarTemporalAAUpscaler->GetInt() != 0;
+
 	static const auto CVarNGXEnable = IConsoleManager::Get().FindConsoleVariable(TEXT("r.NGX.Enable"));
-	bool bNGXEnabled = CVarNGXEnable && CVarNGXEnable->GetInt();
+	const bool bNGXEnabled = CVarNGXEnable && CVarNGXEnable->GetInt();
 
 	static const auto CVarDLSSEnable = IConsoleManager::Get().FindConsoleVariable(TEXT("r.NGX.DLSS.Enable"));
-	bool bDLSSEnabled = CVarDLSSEnable && CVarDLSSEnable->GetInt();
+	const bool bDLSSEnabled = CVarDLSSEnable && CVarDLSSEnable->GetInt();
 
 	static const auto CVarDLSSQuality = IConsoleManager::Get().FindConsoleVariable(TEXT("r.NGX.DLSS.Quality"));
-	int32 DLSSQuality = CVarDLSSQuality ? CVarDLSSQuality->GetInt() : 0;
+	const int32 DLSSQuality = CVarDLSSQuality ? CVarDLSSQuality->GetInt() : 0;
 
 	static const auto CVarDLSSAutoQualityMode = IConsoleManager::Get().FindConsoleVariable(TEXT("r.NGX.DLSS.Quality.Auto"));
-	bool bIsAutoQualityMode = CVarDLSSAutoQualityMode ? CVarDLSSAutoQualityMode->GetBool() : false;
+	const bool bIsAutoQualityMode = CVarDLSSAutoQualityMode ? CVarDLSSAutoQualityMode->GetBool() : false;
+	const bool bDLAAEnabled = (DLSSUpscaler != nullptr) && DLSSUpscaler->IsDLAAMode();
 
-	if (bNGXEnabled && bDLSSEnabled && bIsAutoQualityMode)
+	if (bDLAAEnabled)
+	{
+		// DLSS is mutually exclusive with DLAA, DLAA wins
+		return UDLSSMode::Off;
+	}
+	else if (bTemporalUpscalerActive && bNGXEnabled && bDLSSEnabled && bIsAutoQualityMode)
 	{
 		return UDLSSMode::Auto;
 	}
-	else if (bNGXEnabled && bDLSSEnabled && CVarDLSSQuality)
+	else if (bTemporalUpscalerActive && bNGXEnabled && bDLSSEnabled && CVarDLSSQuality)
 	{
 		static_assert(int32(EDLSSQualityMode::NumValues) == 5, "dear DLSS plugin NVIDIA developer, please update this code to handle the new enum values");
 
@@ -431,23 +521,48 @@ UDLSSMode UDLSSLibrary::GetDLSSMode()
 	return UDLSSMode::Off;
 }
 
+#ifndef ENGINE_CAN_SUPPORT_NIS_PLUGIN
+#define ENGINE_CAN_SUPPORT_NIS_PLUGIN (ENGINE_MAJOR_VERSION == 5 || (ENGINE_MAJOR_VERSION == 4 && ENGINE_MINOR_VERSION ==27 && ENGINE_PATCH_VERSION >=1 ))
+#endif
+
 void UDLSSLibrary::SetDLSSSharpness(float Sharpness)
 {
 #if WITH_DLSS
+
 	if (!TryInitDLSSLibrary())
 	{
 		UE_LOG(LogDLSSBlueprint, Error, TEXT("SetDLSSSharpness should not be called before PostEngineInit"));
 		return;
 	}
-
 	static const auto CVarNGXDLSSharpness = IConsoleManager::Get().FindConsoleVariable(TEXT("r.NGX.DLSS.Sharpness"));
-	
 	if (CVarNGXDLSSharpness)
 	{
+#if ENGINE_CAN_SUPPORT_NIS_PLUGIN
+		static const auto CVarNISSharpness = IConsoleManager::Get().FindConsoleVariable(TEXT("r.NIS.Sharpness"));
+		static const auto CVarNISEnable = IConsoleManager::Get().FindConsoleVariable(TEXT("r.NIS.Enable"));
+		const bool bHasNISPlugin = CVarNISSharpness != nullptr && CVarNISEnable != nullptr;
+		const bool bIsNISEnabled = bHasNISPlugin && CVarNISEnable->GetBool();
 
-		// Quantize here so we can have sharpness snap to 0, which downstream is used to turn off the NGX sharpening flag
-		// CVarNGXDLSSharpness->Set(Sharpness, ECVF_SetByCommandline)  internally uses	Set(*FString::Printf(TEXT("%g"), InValue), SetBy);
-		CVarNGXDLSSharpness->Set(*FString::Printf(TEXT("%2.2f"), Sharpness), ECVF_SetByCommandline);
+		if (bHasNISPlugin && bIsNISEnabled)
+		{
+			const int32 PreferNISSharpen = CVarNGXDLSSPreferNISSharpen.GetValueOnAnyThread();
+			const bool bUseNISSharpen = PreferNISSharpen == 1 || (PreferNISSharpen == 2 && Sharpness > 0);
+			if (bUseNISSharpen)
+			{
+				Sharpness = FMath::Clamp(Sharpness, 0.0f, 1.0f);
+			}
+			// Quantize here so we can have sharpness snap to 0, which downstream is used to turn off the NGX sharpening flag
+			// CVarNGXDLSSharpness->Set(Sharpness, ECVF_SetByCommandline)  internally uses	Set(*FString::Printf(TEXT("%g"), InValue), SetBy);
+			CVarNGXDLSSharpness->Set(*FString::Printf(TEXT("%2.2f"), bUseNISSharpen ? 0.0f : Sharpness), ECVF_SetByCommandline);
+			CVarNISSharpness->Set(   *FString::Printf(TEXT("%2.2f"), bUseNISSharpen ? Sharpness : 0.0f), ECVF_SetByCommandline);
+		}
+		else
+#endif	// ENGINE_CAN_SUPPORT_NIS_PLUGIN
+		{
+			// Quantize here so we can have sharpness snap to 0, which downstream is used to turn off the NGX sharpening flag
+			// CVarNGXDLSSharpness->Set(Sharpness, ECVF_SetByCommandline)  internally uses	Set(*FString::Printf(TEXT("%g"), InValue), SetBy);
+			CVarNGXDLSSharpness->Set(*FString::Printf(TEXT("%2.2f"), Sharpness), ECVF_SetByCommandline);
+		}
 	}
 #endif
 }
@@ -465,7 +580,33 @@ float UDLSSLibrary::GetDLSSSharpness()
 	
 	if (CVarNGXDLSSharpness)
 	{
-		return CVarNGXDLSSharpness->GetFloat();
+#if ENGINE_CAN_SUPPORT_NIS_PLUGIN
+		static const auto CVarNISSharpness = IConsoleManager::Get().FindConsoleVariable(TEXT("r.NIS.Sharpness"));
+		static const auto CVarNISEnable = IConsoleManager::Get().FindConsoleVariable(TEXT("r.NIS.Enable"));
+		const bool bHasNISPlugin = CVarNISSharpness != nullptr && CVarNISEnable != nullptr;
+		const bool bIsNISEnabled = bHasNISPlugin && CVarNISEnable->GetBool();
+		const int32 PreferNISSharpen = CVarNGXDLSSPreferNISSharpen.GetValueOnAnyThread();
+		if (bHasNISPlugin && bIsNISEnabled && (PreferNISSharpen == 1))
+		{
+			return CVarNISSharpness->GetFloat();
+		}
+		else if (bHasNISPlugin && bIsNISEnabled && (PreferNISSharpen == 2))
+		{
+			const float DLSSSharpness = CVarNGXDLSSharpness->GetFloat();
+			if (DLSSSharpness < 0)
+			{
+				return DLSSSharpness;
+			}
+			else
+			{
+				return CVarNISSharpness->GetFloat();
+			}
+		}
+		else
+#endif
+		{
+			return CVarNGXDLSSharpness->GetFloat();
+		}
 	}
 #endif
 
@@ -515,6 +656,9 @@ static UDLSSSupport ToUDLSSSupport(EDLSSSupport InDLSSSupport)
 
 		case EDLSSSupport::NotSupportedOperatingSystemOutOfDate:
 			return UDLSSSupport::NotSupportedOperatingSystemOutOfDate;
+
+		case EDLSSSupport::NotSupportedIncompatibleAPICaptureToolActive:
+			return UDLSSSupport::NotSupportedIncompatibleAPICaptureToolActive;
 	}
 }
 
@@ -526,6 +670,14 @@ bool UDLSSLibrary::TryInitDLSSLibrary()
 		return true;
 	}
 
+	// Register this before we bail out so we can show error messages
+#if !UE_BUILD_SHIPPING
+	if (!DLSSOnScreenMessagesDelegateHandle.IsValid())
+	{
+		DLSSOnScreenMessagesDelegateHandle = FCoreDelegates::OnGetOnScreenMessages.AddStatic(&GetDLSSOnScreenMessages);
+	}
+#endif
+
 	IDLSSModuleInterface* DLSSModule = FModuleManager::GetModulePtr<IDLSSModuleInterface>(TEXT("DLSS"));
 	if (DLSSModule == nullptr)
 	{
@@ -535,10 +687,6 @@ bool UDLSSLibrary::TryInitDLSSLibrary()
 	DLSSUpscaler = DLSSModule->GetDLSSUpscaler();
 	DLSSSupport = ToUDLSSSupport(DLSSModule->QueryDLSSSupport());
 	DLSSModule->GetDLSSMinDriverVersion(MinDLSSDriverVersionMajor, MinDLSSDriverVersionMinor);
-
-#if !UE_BUILD_SHIPPING
-	DLSSOnScreenMessagesDelegateHandle = FCoreDelegates::OnGetOnScreenMessages.AddStatic(&GetDLSSOnScreenMessages);
-#endif
 
 	checkf((DLSSModule->GetDLSSUpscaler() != nullptr) || (DLSSModule->QueryDLSSSupport() != EDLSSSupport::Supported), TEXT("mismatch between not having a valid DLSSModule->GetDLSSUpscaler() while also reporting DLSS as being supported by DLSSModule->QueryDLSSSupport() %u "), DLSSModule->QueryDLSSSupport());
 

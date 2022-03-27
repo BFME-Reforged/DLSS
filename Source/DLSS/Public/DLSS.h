@@ -34,7 +34,8 @@ enum class EDLSSSupport : uint8
 	NotSupported,
 	NotSupportedIncompatibleHardware,
 	NotSupportedDriverOutOfDate,
-	NotSupportedOperatingSystemOutOfDate
+	NotSupportedOperatingSystemOutOfDate,
+	NotSupportedIncompatibleAPICaptureToolActive,
 };
 
 

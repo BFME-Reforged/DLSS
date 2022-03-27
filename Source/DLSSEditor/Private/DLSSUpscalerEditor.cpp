@@ -1,21 +1,12 @@
 /*
-* Copyright (c) 2020 NVIDIA CORPORATION.  All rights reserved.
+* Copyright (c) 2020 - 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 *
-* NVIDIA Corporation and its licensors retain all intellectual property and proprietary
-* rights in and to this software, related documentation and any modifications thereto.
-* Any use, reproduction, disclosure or distribution of this software and related
-* documentation without an express license agreement from NVIDIA Corporation is strictly
-* prohibited.
-*
-* TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, THIS SOFTWARE IS PROVIDED *AS IS*
-* AND NVIDIA AND ITS SUPPLIERS DISCLAIM ALL WARRANTIES, EITHER EXPRESS OR IMPLIED,
-* INCLUDING, BUT NOT LIMITED TO, IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
-* PARTICULAR PURPOSE.  IN NO EVENT SHALL NVIDIA OR ITS SUPPLIERS BE LIABLE FOR ANY
-* SPECIAL, INCIDENTAL, INDIRECT, OR CONSEQUENTIAL DAMAGES WHATSOEVER (INCLUDING, WITHOUT
-* LIMITATION, DAMAGES FOR LOSS OF BUSINESS PROFITS, BUSINESS INTERRUPTION, LOSS OF
-* BUSINESS INFORMATION, OR ANY OTHER PECUNIARY LOSS) ARISING OUT OF THE USE OF OR
-* INABILITY TO USE THIS SOFTWARE, EVEN IF NVIDIA HAS BEEN ADVISED OF THE POSSIBILITY OF
-* SUCH DAMAGES.
+* NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
+* property and proprietary rights in and to this material, related
+* documentation and any modifications thereto. Any use, reproduction,
+* disclosure or distribution of this material and related documentation
+* without an express license agreement from NVIDIA CORPORATION or
+* its affiliates is strictly prohibited.
 */
 
 #include "DLSSUpscalerEditor.h"
@@ -53,6 +44,18 @@
 
 #define LOCTEXT_NAMESPACE "FDLSSEditorModule"
 
+
+// We can't quite check whether we have CL 16509387 in UE5-Release-5.0 so we do this in a round about way by branch name
+// We also can't do a preprocessor string compare in C++ so we resolve this in DLSSEditor.Build.cs;
+#ifndef USE_SLOT_SLOT_ARGUMENTS_API
+#define USE_SLOT_SLOT_ARGUMENTS_API 1
+#endif
+
+// We can't quite check whether we have CL 16848904 (in UE5-Main) so we do this in a round about way
+#ifndef SUPPORTS_POSTPROCESSING_SCREEN_PERCENTAGE
+#define SUPPORTS_POSTPROCESSING_SCREEN_PERCENTAGE 1
+#endif
+
 // DLSS_TODO move the implementation of this to FDLSSUpscalerEditor?
 class DLSSEDITOR_API SDLSSSettings : public SCompoundWidget
 {
@@ -79,7 +82,11 @@ private:
 
 
 	// Create a gridslot for the group quality level with all the required formatting
+#if USE_SLOT_SLOT_ARGUMENTS_API
+	SGridPanel::FSlot::FSlotArguments MakeGridSlot(int32 InCol, int32 InRow, int32 InColSpan = 1, int32 InRowSpan = 1);
+#else
 	SGridPanel::FSlot& MakeGridSlot(int32 InCol, int32 InRow, int32 InColSpan = 1, int32 InRowSpan = 1);
+#endif
 
 private:
 
@@ -120,7 +127,17 @@ FReply SDLSSSettings::OnHeaderClicked(EDLSSQualityMode InQualityLevel)
 
 	return FReply::Handled();
 }
-
+#if USE_SLOT_SLOT_ARGUMENTS_API
+SGridPanel::FSlot::FSlotArguments SDLSSSettings::MakeGridSlot(int32 InCol, int32 InRow, int32 InColSpan /*= 1*/, int32 InRowSpan /*= 1*/)
+{
+	float PaddingH = 2.0f;
+	float PaddingV = InRow == 0 ? 8.0f : 2.0f;
+	return MoveTemp(SGridPanel::Slot(InCol, InRow)
+		.Padding(PaddingH, PaddingV)
+		.RowSpan(InRowSpan)
+		.ColumnSpan(InColSpan));
+}
+#else
 SGridPanel::FSlot& SDLSSSettings::MakeGridSlot(int32 InCol, int32 InRow, int32 InColSpan /*= 1*/, int32 InRowSpan /*= 1*/)
 {
 	float PaddingH = 2.0f;
@@ -130,7 +147,7 @@ SGridPanel::FSlot& SDLSSSettings::MakeGridSlot(int32 InCol, int32 InRow, int32 I
 		.RowSpan(InRowSpan)
 		.ColumnSpan(InColSpan);
 }
-
+#endif
 void SDLSSSettings::Construct(const FArguments& InArgs)
 {
 	this->UpscalerEditor = InArgs._UpscalerEditor;
@@ -245,7 +262,11 @@ void FDLSSUpscalerEditor::SetupEditorViewFamily(FSceneViewFamily& ViewFamily, FE
 	static const auto CVarDLSSAutomationTesting = IConsoleManager::Get().FindConsoleVariable(TEXT("r.NGX.DLSS.AutomationTesting"));
 	const bool bDLSSActiveWithAutomation = !GIsAutomationTesting || (GIsAutomationTesting && CVarDLSSAutomationTesting && (CVarDLSSAutomationTesting->GetInt() != 0));
 
+#if DLSS_ENGINE_HAS_GTEMPORALUPSCALER
 	if ((GTemporalUpscaler == DLSSUpscaler) && bDLSSActive && bDLSSActiveWithAutomation)
+#else
+	if (bDLSSActive && bDLSSActiveWithAutomation)
+#endif
 	{
 		check(GIsEditor);
 		checkf(GCustomStaticScreenPercentage == DLSSUpscaler, TEXT("GCustomStaticScreenPercentage is not set to the DLSS upscaler. Please check that only one upscaling plugin is active."));
@@ -264,8 +285,11 @@ void FDLSSUpscalerEditor::SetupEditorViewFamily(FSceneViewFamily& ViewFamily, FE
 			
 			const float ResolutionFraction = DLSSViewportData->ResolutionFraction;
 			ViewFamily.SetScreenPercentageInterface(new FLegacyScreenPercentageDriver(
-				ViewFamily, ResolutionFraction,
-				/* AllowPostProcessSettingsScreenPercentage = */  false));
+				ViewFamily, ResolutionFraction
+#if SUPPORTS_POSTPROCESSING_SCREEN_PERCENTAGE					
+				/* AllowPostProcessSettingsScreenPercentage = */, false
+#endif
+			));
 		}
 	}
 }
@@ -277,7 +301,11 @@ bool FDLSSUpscalerEditor::GenerateEditorViewportOptionsMenuEntry(const ICustomEd
 
 	static const auto CVarDLSSEnable = IConsoleManager::Get().FindConsoleVariable(TEXT("r.NGX.DLSS.Enable"));
 
+#if DLSS_ENGINE_HAS_GTEMPORALUPSCALER
 	if ((GTemporalUpscaler == DLSSUpscaler) && CVarDLSSEnable && (CVarDLSSEnable->GetInt() != 0))
+#else
+	if (CVarDLSSEnable && (CVarDLSSEnable->GetInt() != 0))
+#endif
 	{
 		check(GIsEditor);
 		checkf(GCustomStaticScreenPercentage == DLSSUpscaler, TEXT("GCustomStaticScreenPercentage is not set to the DLSS upscaler. Please check that only one upscaling plugin is active."));

@@ -44,7 +44,8 @@ enum class UDLSSSupport : uint8
 	NotSupportedIncompatibleHardware UMETA(DisplayName = "Incompatible Hardware", ToolTip = "DLSS requires an NVIDIA RTX GPU"),
 	NotSupportedDriverOutOfDate UMETA(DisplayName = "Driver Out of Date", ToolTip = "The driver is outdated. Also see GetDLSSMinimumDriverVersion"),
 	NotSupportedOperatingSystemOutOfDate UMETA(DisplayName = "Operating System Out of Date", ToolTip = "DLSS requires at least Windows 10 Fall 2017 Creators Update 64-bit, (v1709, build 16299)"),
-	NotSupportedByPlatformAtBuildTime UMETA(DisplayName = "Platform Not Supported At Build Time", ToolTip = "This platform doesn't not support DLSS at build time. Currently DLSS is only supported on Windows 64")
+	NotSupportedByPlatformAtBuildTime UMETA(DisplayName = "Platform Not Supported At Build Time", ToolTip = "This platform doesn't not support DLSS at build time. Currently DLSS is only supported on Windows 64"),
+	NotSupportedIncompatibleAPICaptureToolActive UMETA(DisplayName = "Incompatible API Capture Tool Active", ToolTip = "DLSS is not compatible with an active API capture tool such as RenderDoc.")
 };
 
 
@@ -67,17 +68,25 @@ class  UDLSSLibrary : public UBlueprintFunctionLibrary
 	GENERATED_BODY()
 public:
 
-	/** Checks whether DLSS is supported by the current GPU. Further details can be retrieved via QueryDLSSSupport*/
+	/** Checks whether DLSS/DLAA is supported by the current GPU. Further details can be retrieved via QueryDLSSSupport*/
 	UFUNCTION(BlueprintPure, Category = "DLSS", meta = (DisplayName = "Is NVIDIA DLSS Supported"))
 	static DLSSBLUEPRINT_API bool IsDLSSSupported();
 
-	/** Checks whether DLSS is supported by the current GPU	*/
+	/** Checks whether DLSS/DLAA is supported by the current GPU	*/
 	UFUNCTION(BlueprintPure, Category = "DLSS", meta = (DisplayName = "Query NVIDIA DLSS Support"))
 	static DLSSBLUEPRINT_API UDLSSSupport QueryDLSSSupport();
 
 	/** If QueryDLSSSupport returns "NotSupportedDriverOutOfDate", then MinDriverVersionMajor and MinDriverVersionMinor contains the required driver version.*/
 	UFUNCTION(BlueprintPure, Category = "DLSS", meta = (DisplayName = "Get DLSS Minimum DriverVersion"))
 	static DLSSBLUEPRINT_API void GetDLSSMinimumDriverVersion(int32& MinDriverVersionMajor, int32& MinDriverVersionMinor);
+
+	/** Enable/disable DLAA. Note that while DLAA is enabled, DLSS will be automatically disabled */
+	UFUNCTION(BlueprintCallable, Category = "DLSS", meta = (DisplayName = "Enable DLAA"))
+	static DLSSBLUEPRINT_API void EnableDLAA(bool bEnabled);
+
+	/** Checks whether DLAA is enabled */
+	UFUNCTION(BlueprintPure, Category = "DLSS", meta = (DisplayName = "Is DLAA Enabled"))
+	static DLSSBLUEPRINT_API bool IsDLAAEnabled();
 
 	/** Checks whether a DLSS mode is supported */
 	UFUNCTION(BlueprintPure, Category = "DLSS", meta = (DisplayName = "Is DLSS Mode Supported"))
@@ -99,7 +108,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "DLSS", meta = (DisplayName = "Set DLSS Mode"))
 	static DLSSBLUEPRINT_API void SetDLSSMode(UDLSSMode DLSSMode);
 
-	/* Reads the console variables to infer the current DLSS mode (r.NGX.DLSS.Enable, r.NGX.DLSS.Quality)*/
+	/* Reads the console variables to infer the current DLSS mode (r.NGX.DLSS.Enable, r.NGX.DLSS.Quality, r.TemporalAA.Upscaler)*/
 	UFUNCTION(BlueprintPure, Category = "DLSS", meta = (DisplayName = "Get DLSS Mode"))
 	static DLSSBLUEPRINT_API UDLSSMode GetDLSSMode();
 

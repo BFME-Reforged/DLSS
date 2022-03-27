@@ -303,8 +303,6 @@ void FNGXD3D11RHI::ExecuteDLSS(FRHICommandList& CmdList, const FRHIDLSSArguments
 	checkf(NVSDK_NGX_SUCCEED(ResultEvaluate), TEXT("NGX_D3D11_EVALUATE_DLSS_EXT failed! (%u %s), %s"), ResultEvaluate, GetNGXResultAsString(ResultEvaluate), *InDLSSState->DLSSFeature->Desc.GetDebugDescription());
 	
 	InDLSSState->DLSSFeature->Tick(FrameCounter);
-	
-	D3D11RHI->ClearState();
 }
 
 /** IModuleInterface implementation */

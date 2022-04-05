@@ -42,7 +42,7 @@ SourceArt/**/*.png
 SourceArt/**/*.tga
 
 # Binary Files
-**/Binaries/**/UE4Editor*
+**/Binaries/
 
 # Builds
 

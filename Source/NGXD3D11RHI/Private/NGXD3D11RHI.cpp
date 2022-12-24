@@ -1,21 +1,12 @@
 /*
-* Copyright (c) 2020 - 2021 NVIDIA CORPORATION.  All rights reserved.
+* Copyright (c) 2020 - 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 *
-* NVIDIA Corporation and its licensors retain all intellectual property and proprietary
-* rights in and to this software, related documentation and any modifications thereto.
-* Any use, reproduction, disclosure or distribution of this software and related
-* documentation without an express license agreement from NVIDIA Corporation is strictly
-* prohibited.
-*
-* TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, THIS SOFTWARE IS PROVIDED *AS IS*
-* AND NVIDIA AND ITS SUPPLIERS DISCLAIM ALL WARRANTIES, EITHER EXPRESS OR IMPLIED,
-* INCLUDING, BUT NOT LIMITED TO, IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
-* PARTICULAR PURPOSE.  IN NO EVENT SHALL NVIDIA OR ITS SUPPLIERS BE LIABLE FOR ANY
-* SPECIAL, INCIDENTAL, INDIRECT, OR CONSEQUENTIAL DAMAGES WHATSOEVER (INCLUDING, WITHOUT
-* LIMITATION, DAMAGES FOR LOSS OF BUSINESS PROFITS, BUSINESS INTERRUPTION, LOSS OF
-* BUSINESS INFORMATION, OR ANY OTHER PECUNIARY LOSS) ARISING OUT OF THE USE OF OR
-* INABILITY TO USE THIS SOFTWARE, EVEN IF NVIDIA HAS BEEN ADVISED OF THE POSSIBILITY OF
-* SUCH DAMAGES.
+* NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
+* property and proprietary rights in and to this material, related
+* documentation and any modifications thereto. Any use, reproduction,
+* disclosure or distribution of this material and related documentation
+* without an express license agreement from NVIDIA CORPORATION or
+* its affiliates is strictly prohibited.
 */
 
 #include "NGXD3D11RHI.h"
@@ -23,16 +14,9 @@
 #include "nvsdk_ngx.h"
 #include "nvsdk_ngx_helpers.h"
 
-#include "D3D11RHIPrivate.h"
-#include "D3D11Util.h"
-#include "D3D11State.h"
-#include "D3D11Resources.h"
-#include "D3D11Viewport.h"
-#include "D3D11ConstantBuffer.h"
-#include "D3D11StateCache.h"
-#include "RHIValidationCommon.h"
-
+#include "ID3D11DynamicRHI.h"
 #include "GenericPlatform/GenericPlatformFile.h"
+
 DEFINE_LOG_CATEGORY_STATIC(LogDLSSNGXD3D11RHI, Log, All);
 
 #define LOCTEXT_NAMESPACE "FNGXD3D11RHIModule"
@@ -51,7 +35,7 @@ public:
 		NVSDK_NGX_Result ResultReleaseFeature = NVSDK_NGX_D3D11_ReleaseFeature(Feature);
 		checkf(NVSDK_NGX_SUCCEED(ResultReleaseFeature), TEXT("NVSDK_NGX_D3D11_ReleaseFeature failed! (%u %s), %s"), ResultReleaseFeature, GetNGXResultAsString(ResultReleaseFeature), *Desc.GetDebugDescription());
 
-		if (NGXRHI::SupportsAllocateParameters())
+		if (Parameter != nullptr)
 		{
 			NVSDK_NGX_Result ResultDestroyParameter = NVSDK_NGX_D3D11_DestroyParameters(Parameter);
 			checkf(NVSDK_NGX_SUCCEED(ResultDestroyParameter), TEXT("NVSDK_NGX_D3D11_DestroyParameters failed! (%u %s), %s"), ResultDestroyParameter, GetNGXResultAsString(ResultDestroyParameter), *Desc.GetDebugDescription());
@@ -68,7 +52,7 @@ public:
 	virtual ~FNGXD3D11RHI();
 private:
 
-	FD3D11DynamicRHI* D3D11RHI = nullptr;
+	ID3D11DynamicRHI* D3D11RHI = nullptr;
 	ID3D11Device* Direct3DDevice = nullptr;
 	ID3D11DeviceContext* Direct3DDeviceIMContext = nullptr;
 
@@ -129,9 +113,9 @@ NVSDK_NGX_Result FNGXD3D11RHI::Init_NGX_D3D11(const FNGXRHICreateArguments& InAr
 
 FNGXD3D11RHI::FNGXD3D11RHI(const FNGXRHICreateArguments& Arguments)
 	: NGXRHI(Arguments)
-	, D3D11RHI(static_cast<FD3D11DynamicRHI*>(Arguments.DynamicRHI))
-	, Direct3DDevice(D3D11RHI->GetDevice())
-	, Direct3DDeviceIMContext(D3D11RHI->GetDeviceContext())
+	, D3D11RHI(CastDynamicRHI<ID3D11DynamicRHI>(Arguments.DynamicRHI))
+	, Direct3DDevice(D3D11RHI->RHIGetDevice())
+	, Direct3DDeviceIMContext(D3D11RHI->RHIGetDeviceContext())
 {
 	ensure(D3D11RHI);
 	ensure(Direct3DDevice);
@@ -164,14 +148,6 @@ FNGXD3D11RHI::FNGXD3D11RHI(const FNGXRHICreateArguments& Arguments)
 			DLSSQueryFeature.DriverRequirements.DriverUpdateRequired = true;
 		}
 
-		if (NVSDK_NGX_FAILED(ResultGetParameters))
-		{
-			ResultGetParameters = NVSDK_NGX_D3D11_GetParameters(&DLSSQueryFeature.CapabilityParameters);
-			UE_LOG(LogDLSSNGXD3D11RHI, Log, TEXT("NVSDK_NGX_D3D11_GetParameters -> (%u %s)"), ResultGetParameters, GetNGXResultAsString(ResultGetParameters));
-
-			bSupportsAllocateParameters = false;
-		}
-
 		if (NVSDK_NGX_SUCCEED(ResultGetParameters))
 		{
 			DLSSQueryFeature.QueryDLSSSupport();
@@ -188,7 +164,7 @@ FNGXD3D11RHI::~FNGXD3D11RHI()
 		ReleaseAllocatedFeatures();
 
 		NVSDK_NGX_Result Result;
-		if (bSupportsAllocateParameters && DLSSQueryFeature.CapabilityParameters)
+		if (DLSSQueryFeature.CapabilityParameters != nullptr)
 		{
 			Result = NVSDK_NGX_D3D11_DestroyParameters(DLSSQueryFeature.CapabilityParameters);
 			UE_LOG(LogDLSSNGXD3D11RHI, Log, TEXT("NVSDK_NGX_D3D11_DestroyParameters -> (%u %s)"), Result, GetNGXResultAsString(Result));
@@ -225,16 +201,8 @@ void FNGXD3D11RHI::ExecuteDLSS(FRHICommandList& CmdList, const FRHIDLSSArguments
 	{
 		NVSDK_NGX_Parameter* NewNGXParameterHandle = nullptr;
 
-		if (NGXRHI::SupportsAllocateParameters())
-		{
-			NVSDK_NGX_Result Result = NVSDK_NGX_D3D11_AllocateParameters(&NewNGXParameterHandle);
-			checkf(NVSDK_NGX_SUCCEED(Result), TEXT("NVSDK_NGX_D3D11_AllocateParameters failed! (%u %s)"), Result, GetNGXResultAsString(Result));
-		}
-		else
-		{
-			NVSDK_NGX_Result Result = NVSDK_NGX_D3D11_GetParameters(&NewNGXParameterHandle);
-			checkf(NVSDK_NGX_SUCCEED(Result), TEXT("NVSDK_NGX_D3D11_GetParameters failed! (%u %s)"), Result, GetNGXResultAsString(Result));
-		}
+		NVSDK_NGX_Result Result = NVSDK_NGX_D3D11_AllocateParameters(&NewNGXParameterHandle);
+		checkf(NVSDK_NGX_SUCCEED(Result), TEXT("NVSDK_NGX_D3D11_AllocateParameters failed! (%u %s)"), Result, GetNGXResultAsString(Result));
 	
 		ApplyCommonNGXParameterSettings(NewNGXParameterHandle, InArguments);
 
@@ -255,32 +223,32 @@ void FNGXD3D11RHI::ExecuteDLSS(FRHICommandList& CmdList, const FRHIDLSSArguments
 
 	// execute
 
-	D3D11RHI->RegisterGPUWork(1);
+	D3D11RHI->RHIRegisterWork(1);
 
 	NVSDK_NGX_D3D11_DLSS_Eval_Params DlssEvalParams;
 	FMemory::Memzero(DlssEvalParams);
 
-	DlssEvalParams.Feature.pInOutput = GetD3D11TextureFromRHITexture(InArguments.OutputColor)->GetResource();
+	DlssEvalParams.Feature.pInOutput = D3D11RHI->RHIGetResource(InArguments.OutputColor);
 	DlssEvalParams.InOutputSubrectBase.X = InArguments.DestRect.Min.X;
 	DlssEvalParams.InOutputSubrectBase.Y = InArguments.DestRect.Min.Y;
 
 	DlssEvalParams.InRenderSubrectDimensions.Width = InArguments.SrcRect.Width();
 	DlssEvalParams.InRenderSubrectDimensions.Height = InArguments.SrcRect.Height();
 
-	DlssEvalParams.Feature.pInColor = GetD3D11TextureFromRHITexture(InArguments.InputColor)->GetResource();
+	DlssEvalParams.Feature.pInColor = D3D11RHI->RHIGetResource(InArguments.InputColor);
 	DlssEvalParams.InColorSubrectBase.X = InArguments.SrcRect.Min.X;
 	DlssEvalParams.InColorSubrectBase.Y = InArguments.SrcRect.Min.Y;
 
-	DlssEvalParams.pInDepth = GetD3D11TextureFromRHITexture(InArguments.InputDepth)->GetResource();
+	DlssEvalParams.pInDepth = D3D11RHI->RHIGetResource(InArguments.InputDepth);
 	DlssEvalParams.InDepthSubrectBase.X = InArguments.SrcRect.Min.X;
 	DlssEvalParams.InDepthSubrectBase.Y = InArguments.SrcRect.Min.Y;
 
 	// The VelocityCombine pass puts the motion vectors into the top left corner
-	DlssEvalParams.pInMotionVectors = GetD3D11TextureFromRHITexture(InArguments.InputMotionVectors)->GetResource();
+	DlssEvalParams.pInMotionVectors = D3D11RHI->RHIGetResource(InArguments.InputMotionVectors);
 	DlssEvalParams.InMVSubrectBase.X = 0;
 	DlssEvalParams.InMVSubrectBase.Y = 0;
 
-	DlssEvalParams.pInExposureTexture = InArguments.bUseAutoExposure ? nullptr : GetD3D11TextureFromRHITexture(InArguments.InputExposure)->GetResource();
+	DlssEvalParams.pInExposureTexture = InArguments.bUseAutoExposure ? nullptr : D3D11RHI->RHIGetResource(InArguments.InputExposure);
 	DlssEvalParams.InPreExposure = InArguments.PreExposure;
 
 	DlssEvalParams.Feature.InSharpness = InArguments.Sharpness;

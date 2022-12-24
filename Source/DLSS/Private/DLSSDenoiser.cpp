@@ -31,15 +31,6 @@ static TAutoConsoleVariable<int32> CVarNGXDLSSWaterReflectionsTemporalAA(
 );
 
 
-// defined in Buid.cs since it depends on the branch and engine version
-#if !DLSS_ENGINE_HAS_AAM_TSR
-/** Returns whether the anti-aliasing method use a temporal accumulation */
-static inline bool IsTemporalAccumulationBasedMethod(EAntiAliasingMethod AntiAliasingMethod)
-{
-	return AntiAliasingMethod == AAM_TemporalAA;
-}
-#endif
-
 FDLSSDenoiser::FDLSSDenoiser(const IScreenSpaceDenoiser* InWrappedDenoiser, const FDLSSUpscaler* InUpscaler)
 	: WrappedDenoiser(InWrappedDenoiser)
 	, Upscaler(InUpscaler)
@@ -54,14 +45,7 @@ const TCHAR* FDLSSDenoiser::GetDebugName() const
 	{
 		// we don't have the View here to check whether we have a valid GetTemporalUpscalerInterface, which we'll do when we actually get called to denoise/add TAA
 		// and this is only for profilegpu anyways so OK if it's not 100% accurate
-		if (Upscaler->IsAutoQualityMode())
-		{
-			return TEXT("FDLSSDenoiserWrapper(Auto)");
-		}
-		else
-		{
-			return TEXT("FDLSSDenoiserWrapper(Active)");
-		}
+		return TEXT("FDLSSDenoiserWrapper(Active)");
 	}
 	else
 	{
@@ -87,7 +71,7 @@ IScreenSpaceDenoiser::FPolychromaticPenumbraOutputs FDLSSDenoiser::DenoisePolych
 IScreenSpaceDenoiser::FReflectionsOutputs FDLSSDenoiser::DenoiseReflections(FRDGBuilder& GraphBuilder, const FViewInfo& View, FPreviousViewInfo* PreviousViewInfos, const FSceneTextureParameters& SceneTextures, const FReflectionsInputs& Inputs, const FReflectionsRayTracingConfig Config) const
 { 
 	FReflectionsOutputs Outputs = WrappedDenoiser->DenoiseReflections(GraphBuilder, View, PreviousViewInfos, SceneTextures, Inputs, Config);
-	const bool bIsDLSSActive = Upscaler->IsDLSSActive() && View.Family && Upscaler->IsValidUpscalerInstance(View.Family->GetTemporalUpscalerInterface());
+	const bool bIsDLSSActive = View.Family && FDLSSSceneViewFamilyUpscaler::IsDLSSTemporalUpscaler(View.Family->GetTemporalUpscalerInterface());
 	const bool bApplyTemporalAA = bIsDLSSActive && CVarNGXDLSSReflectionsTemporalAA.GetValueOnRenderThread() && View.ViewState && IsTemporalAccumulationBasedMethod(View.AntiAliasingMethod);
 	if(bApplyTemporalAA)
 	{
@@ -116,7 +100,7 @@ IScreenSpaceDenoiser::FReflectionsOutputs FDLSSDenoiser::DenoiseReflections(FRDG
 IScreenSpaceDenoiser::FReflectionsOutputs FDLSSDenoiser::DenoiseWaterReflections(FRDGBuilder& GraphBuilder, const FViewInfo& View, FPreviousViewInfo* PreviousViewInfos, const FSceneTextureParameters& SceneTextures, const FReflectionsInputs& Inputs, const FReflectionsRayTracingConfig Config) const
 {
 	FReflectionsOutputs Outputs = WrappedDenoiser->DenoiseWaterReflections(GraphBuilder, View, PreviousViewInfos, SceneTextures, Inputs, Config);
-	const bool bIsDLSSActive = Upscaler->IsDLSSActive() && View.Family && Upscaler->IsValidUpscalerInstance(View.Family->GetTemporalUpscalerInterface());
+	const bool bIsDLSSActive = View.Family && FDLSSSceneViewFamilyUpscaler::IsDLSSTemporalUpscaler(View.Family->GetTemporalUpscalerInterface());
 	const bool bApplyTemporalAA = bIsDLSSActive && Upscaler->IsDLSSActive() && CVarNGXDLSSWaterReflectionsTemporalAA.GetValueOnRenderThread() && View.ViewState && IsTemporalAccumulationBasedMethod(View.AntiAliasingMethod);
 	if (bApplyTemporalAA)
 	{
@@ -146,20 +130,6 @@ IScreenSpaceDenoiser::FAmbientOcclusionOutputs FDLSSDenoiser::DenoiseAmbientOccl
 {
 	return WrappedDenoiser->DenoiseAmbientOcclusion(GraphBuilder, View, PreviousViewInfos, SceneTextures, Inputs, Config);
 }
-#if ENGINE_MAJOR_VERSION == 4
-IScreenSpaceDenoiser::FDiffuseIndirectOutputs FDLSSDenoiser::DenoiseDiffuseIndirect(FRDGBuilder& GraphBuilder, const FViewInfo& View, FPreviousViewInfo* PreviousViewInfos, const FSceneTextureParameters& SceneTextures, const FDiffuseIndirectInputs& Inputs, const FAmbientOcclusionRayTracingConfig Config) const
-{
-	return WrappedDenoiser->DenoiseDiffuseIndirect(GraphBuilder, View, PreviousViewInfos, SceneTextures, Inputs, Config);
-}
-IScreenSpaceDenoiser::FDiffuseIndirectOutputs FDLSSDenoiser::DenoiseScreenSpaceDiffuseIndirect(FRDGBuilder& GraphBuilder, const FViewInfo& View, FPreviousViewInfo* PreviousViewInfos, const FSceneTextureParameters& SceneTextures, const FDiffuseIndirectInputs& Inputs, const FAmbientOcclusionRayTracingConfig Config) const
-{
-	return WrappedDenoiser->DenoiseScreenSpaceDiffuseIndirect(GraphBuilder, View, PreviousViewInfos, SceneTextures, Inputs, Config);
-}
-IScreenSpaceDenoiser::FDiffuseIndirectHarmonic FDLSSDenoiser::DenoiseDiffuseIndirectHarmonic(FRDGBuilder& GraphBuilder, const FViewInfo& View, FPreviousViewInfo* PreviousViewInfos, const FSceneTextureParameters& SceneTextures, const FDiffuseIndirectHarmonic& Inputs, const FAmbientOcclusionRayTracingConfig Config) const
-{
-	return WrappedDenoiser->DenoiseDiffuseIndirectHarmonic(GraphBuilder, View, PreviousViewInfos, SceneTextures, Inputs, Config);
-}
-#elif ENGINE_MAJOR_VERSION == 5
 
 FSSDSignalTextures FDLSSDenoiser::DenoiseDiffuseIndirect(FRDGBuilder& GraphBuilder, const FViewInfo& View, FPreviousViewInfo* PreviousViewInfos, const FSceneTextureParameters& SceneTextures, const FDiffuseIndirectInputs& Inputs, const FAmbientOcclusionRayTracingConfig Config) const
 {
@@ -175,9 +145,6 @@ FSSDSignalTextures FDLSSDenoiser::DenoiseDiffuseIndirectHarmonic(FRDGBuilder& Gr
 {
 	return WrappedDenoiser->DenoiseDiffuseIndirectHarmonic(GraphBuilder, View, PreviousViewInfos, SceneTextures, Inputs, CommonDiffuseParameters);
 }
-#else
-#error "ENGINE_MAJOR_VERSION must be either 4 or 5"
-#endif
 
 IScreenSpaceDenoiser::FDiffuseIndirectOutputs FDLSSDenoiser::DenoiseSkyLight(FRDGBuilder& GraphBuilder, const FViewInfo& View, FPreviousViewInfo* PreviousViewInfos, const FSceneTextureParameters& SceneTextures, const FDiffuseIndirectInputs& Inputs, const FAmbientOcclusionRayTracingConfig Config) const
 {

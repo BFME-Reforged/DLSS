@@ -1,8 +1,8 @@
 {
 	"FileVersion": 3,
-	"Version": 12,
-	"VersionName": "2.3.5",
-	"FriendlyName": "NVIDIA DLSS",
+	"Version": 30,
+	"VersionName": "2.4.0b",
+	"FriendlyName": "NVIDIA DLSS/DLAA",
 	"Description": "NVIDIA Deep Learning Super Sampling",
 	"Category": "Rendering",
 	"CreatedBy": "NVIDIA",
@@ -10,7 +10,7 @@
 	"DocsURL": "",
 	"MarketplaceURL": "https://www.unrealengine.com/marketplace/en-US/product/nvidia-dlss",
 	"SupportURL": "mailto:DLSS-Support@nvidia.com",
-	"EngineVersion": "5.0.0",
+	"EngineVersion": "5.1.0",
 	"CanContainContent": true,
 	"Installed": true,
 	"Modules": [

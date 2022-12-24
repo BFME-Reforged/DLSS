@@ -1,21 +1,12 @@
 /*
-* Copyright (c) 2020 - 2021 NVIDIA CORPORATION.  All rights reserved.
+* Copyright (c) 2020 - 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 *
-* NVIDIA Corporation and its licensors retain all intellectual property and proprietary
-* rights in and to this software, related documentation and any modifications thereto.
-* Any use, reproduction, disclosure or distribution of this software and related
-* documentation without an express license agreement from NVIDIA Corporation is strictly
-* prohibited.
-*
-* TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, THIS SOFTWARE IS PROVIDED *AS IS*
-* AND NVIDIA AND ITS SUPPLIERS DISCLAIM ALL WARRANTIES, EITHER EXPRESS OR IMPLIED,
-* INCLUDING, BUT NOT LIMITED TO, IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
-* PARTICULAR PURPOSE.  IN NO EVENT SHALL NVIDIA OR ITS SUPPLIERS BE LIABLE FOR ANY
-* SPECIAL, INCIDENTAL, INDIRECT, OR CONSEQUENTIAL DAMAGES WHATSOEVER (INCLUDING, WITHOUT
-* LIMITATION, DAMAGES FOR LOSS OF BUSINESS PROFITS, BUSINESS INTERRUPTION, LOSS OF
-* BUSINESS INFORMATION, OR ANY OTHER PECUNIARY LOSS) ARISING OUT OF THE USE OF OR
-* INABILITY TO USE THIS SOFTWARE, EVEN IF NVIDIA HAS BEEN ADVISED OF THE POSSIBILITY OF
-* SUCH DAMAGES.
+* NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
+* property and proprietary rights in and to this material, related
+* documentation and any modifications thereto. Any use, reproduction,
+* disclosure or distribution of this material and related documentation
+* without an express license agreement from NVIDIA CORPORATION or
+* its affiliates is strictly prohibited.
 */
 
 #include "NGXRHI.h"
@@ -116,9 +107,6 @@ void NVSDK_CONV NGXLogSink(const char* InNGXMessage, NVSDK_NGX_Logging_Level InL
 
 }
 
-
-// the derived RHIs will set this to false based on runtime support
-bool NGXRHI::bSupportsAllocateParameters = true;
 
 bool NGXRHI::bNGXInitialized = false;
 
@@ -252,22 +240,16 @@ void NGXRHI::FDLSSQueryFeature::QueryDLSSSupport()
 	UE_LOG(LogDLSSNGXRHI, Log, TEXT("Get NVSDK_NGX_Parameter_SuperSampling_MinDriverVersionMajor -> (%u %s), MinDriverVersionMajor = %d"), ResultMinDriverVersionMajor, GetNGXResultAsString(ResultMinDriverVersionMajor), MinDriverVersionMajor);
 	UE_LOG(LogDLSSNGXRHI, Log, TEXT("Get NVSDK_NGX_Parameter_SuperSampling_MinDriverVersionMinor -> (%u %s), MinDriverVersionMinor = %d"), ResultMinDriverVersionMinor, GetNGXResultAsString(ResultMinDriverVersionMinor), MinDriverVersionMinor);
 
-	if (NVSDK_NGX_SUCCEED(ResultUpdatedDriver) && NVSDK_NGX_SUCCEED(ResultMinDriverVersionMajor) && NVSDK_NGX_SUCCEED(ResultMinDriverVersionMinor))
+	if (NVSDK_NGX_SUCCEED(ResultUpdatedDriver))
 	{
 		DriverRequirements.DriverUpdateRequired = DriverRequirements.DriverUpdateRequired || bNeedsUpdatedDriver != 0;
 		
 		// ignore 0.0 and fall back to the what's baked into FNGXDriverRequirements;
-		if (MinDriverVersionMajor)
+		if (NVSDK_NGX_SUCCEED(ResultMinDriverVersionMajor) && NVSDK_NGX_SUCCEED(ResultMinDriverVersionMinor) && MinDriverVersionMajor != 0)
 		{
-			
 			DriverRequirements.MinDriverVersionMajor = MinDriverVersionMajor;
-		}
-
-		if (MinDriverVersionMinor)
-		{
 			DriverRequirements.MinDriverVersionMinor = MinDriverVersionMinor;
 		}
-
 
 		if (bNeedsUpdatedDriver)
 		{
@@ -473,13 +455,8 @@ void NGXRHI::TickPoolElements()
 
 	SET_DWORD_STAT(STAT_DLSSNumFeatures, AllocatedDLSSFeatures.Num());
 	
-
-	// if r.NGX.Enable is 0 then this should be nullptr
 	if(DLSSQueryFeature.CapabilityParameters)
 	{
-		static const auto CVarNGXDLSSEnable = IConsoleManager::Get().FindConsoleVariable(TEXT("r.NGX.Enable"));
-		check(CVarNGXDLSSEnable && CVarNGXDLSSEnable->GetInt() != 0);
-
 		unsigned long long VRAM = 0;
 
 		NVSDK_NGX_Result ResultGetStats = NGX_DLSS_GET_STATS(DLSSQueryFeature.CapabilityParameters, &VRAM);

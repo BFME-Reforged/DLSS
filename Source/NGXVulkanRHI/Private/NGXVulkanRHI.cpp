@@ -11,10 +11,7 @@
 
 #include "NGXVulkanRHI.h"
 
-#include "VulkanRHIPrivate.h"
-#include "VulkanPendingState.h"
-#include "VulkanRHIBridge.h"
-#include "VulkanContext.h"
+#include "IVulkanDynamicRHI.h"
 
 #include "nvsdk_ngx_vk.h"
 #include "nvsdk_ngx_helpers_vk.h"
@@ -38,7 +35,7 @@ public:
 		NVSDK_NGX_Result ResultReleaseFeature = NVSDK_NGX_VULKAN_ReleaseFeature(Feature);
 		checkf(NVSDK_NGX_SUCCEED(ResultReleaseFeature), TEXT("NVSDK_NGX_VULKAN_ReleaseFeature failed! (%u %s), %s"), ResultReleaseFeature, GetNGXResultAsString(ResultReleaseFeature), *Desc.GetDebugDescription());
 
-		if (NGXRHI::SupportsAllocateParameters())
+		if (Parameter != nullptr)
 		{
 			NVSDK_NGX_Result ResultDestroyParameter = NVSDK_NGX_VULKAN_DestroyParameters(Parameter);
 			checkf(NVSDK_NGX_SUCCEED(ResultDestroyParameter), TEXT("NVSDK_NGX_VULKAN_DestroyParameters failed! (%u %s), %s"), ResultDestroyParameter, GetNGXResultAsString(ResultDestroyParameter), *Desc.GetDebugDescription());
@@ -56,8 +53,7 @@ public:
 	virtual ~FNGXVulkanRHI();
 private:
 
-	FVulkanDynamicRHI* VulkanRHI = nullptr;
-	FVulkanDevice* VulkanDevice = nullptr;
+	IVulkanDynamicRHI* VulkanRHI = nullptr;
 
 	NVSDK_NGX_Result Init_NGX_VK(const FNGXRHICreateArguments& InArguments, const wchar_t* InApplicationDataPath, VkInstance InInstance, VkPhysicalDevice InPD, VkDevice InDevice, const NVSDK_NGX_FeatureCommonInfo* InFeatureInfo);
 	static bool IsIncompatibleAPICaptureToolActive();
@@ -106,20 +102,18 @@ NVSDK_NGX_Result FNGXVulkanRHI::Init_NGX_VK(const FNGXRHICreateArguments& InArgu
 
 FNGXVulkanRHI::FNGXVulkanRHI(const FNGXRHICreateArguments& Arguments)
 	: NGXRHI(Arguments)
-	, VulkanRHI(static_cast<FVulkanDynamicRHI*>(Arguments.DynamicRHI))
-	, VulkanDevice(VulkanRHIBridge::GetDevice(VulkanRHI)
-)
+	, VulkanRHI(CastDynamicRHI<IVulkanDynamicRHI>(Arguments.DynamicRHI))
 {
-	ensure(VulkanRHI);
+	check(VulkanRHI);
 
 	const FString NGXLogDir = GetNGXLogDirectory();
 	IPlatformFile::GetPlatformPhysical().CreateDirectoryTree(*NGXLogDir);
 
 	bIsIncompatibleAPICaptureToolActive = IsIncompatibleAPICaptureToolActive();
 
-	VkInstance VulkanInstance = reinterpret_cast<VkInstance>(VulkanRHIBridge::GetInstance(VulkanRHI));
-	VkPhysicalDevice VulkanPhysicalDevice = reinterpret_cast<VkPhysicalDevice>(VulkanRHIBridge::GetPhysicalDevice(VulkanDevice));
-	VkDevice VulkanLogicalDevice = reinterpret_cast<VkDevice>(VulkanRHIBridge::GetLogicalDevice(VulkanDevice));
+	VkInstance VulkanInstance = VulkanRHI->RHIGetVkInstance();
+	VkPhysicalDevice VulkanPhysicalDevice = VulkanRHI->RHIGetVkPhysicalDevice();
+	VkDevice VulkanLogicalDevice = VulkanRHI->RHIGetVkDevice();
 
 	NVSDK_NGX_Result ResultInit = Init_NGX_VK(Arguments, *NGXLogDir, VulkanInstance, VulkanPhysicalDevice, VulkanLogicalDevice, CommonFeatureInfo());
 	UE_LOG(LogDLSSNGXVulkanRHI, Log, TEXT("NVSDK_NGX_VULKAN_Init (Log %s) -> (%u %s)"), *NGXLogDir, ResultInit, GetNGXResultAsString(ResultInit));
@@ -143,14 +137,6 @@ FNGXVulkanRHI::FNGXVulkanRHI(const FNGXRHICreateArguments& Arguments)
 			DLSSQueryFeature.DriverRequirements.DriverUpdateRequired = true;
 		}
 
-		if (NVSDK_NGX_FAILED(ResultGetParameters))
-		{
-			ResultGetParameters = NVSDK_NGX_VULKAN_GetParameters(&DLSSQueryFeature.CapabilityParameters);
-			UE_LOG(LogDLSSNGXVulkanRHI, Log, TEXT("NVSDK_NGX_VULKAN_GetParameters -> (%u %s)"), ResultGetParameters, GetNGXResultAsString(ResultGetParameters));
-			
-			bSupportsAllocateParameters = false;
-		}
-
 		if (NVSDK_NGX_SUCCEED(ResultGetParameters))
 		{
 			DLSSQueryFeature.QueryDLSSSupport();
@@ -167,7 +153,7 @@ FNGXVulkanRHI::~FNGXVulkanRHI()
 		ReleaseAllocatedFeatures();
 		
 		NVSDK_NGX_Result Result;
-		if (bSupportsAllocateParameters && DLSSQueryFeature.CapabilityParameters)
+		if (DLSSQueryFeature.CapabilityParameters != nullptr)
 		{
 			Result = NVSDK_NGX_VULKAN_DestroyParameters(DLSSQueryFeature.CapabilityParameters);
 			UE_LOG(LogDLSSNGXVulkanRHI, Log, TEXT("NVSDK_NGX_VULKAN_DestroyParameters -> (%u %s)"), Result, GetNGXResultAsString(Result));
@@ -187,8 +173,7 @@ void FNGXVulkanRHI::ExecuteDLSS(FRHICommandList& CmdList, const FRHIDLSSArgument
 
 	InArguments.Validate();
 
-	FVulkanCommandListContextImmediate& ImmediateContext = VulkanDevice->GetImmediateContext();
-	VkCommandBuffer VulkanCommandBuffer = ImmediateContext.GetCommandBufferManager()->GetActiveCmdBuffer()->GetHandle();
+	VkCommandBuffer VulkanCommandBuffer = VulkanRHI->RHIGetActiveVkCommandBuffer();
 	
 	if (InDLSSState->RequiresFeatureRecreation(InArguments))
 	{
@@ -205,16 +190,8 @@ void FNGXVulkanRHI::ExecuteDLSS(FRHICommandList& CmdList, const FRHIDLSSArgument
 	if (!InDLSSState->DLSSFeature)
 	{
 		NVSDK_NGX_Parameter* NewNGXParameterHandle = nullptr;
-		if (NGXRHI::SupportsAllocateParameters())
-		{
-			NVSDK_NGX_Result Result = NVSDK_NGX_VULKAN_AllocateParameters(&NewNGXParameterHandle);
-			checkf(NVSDK_NGX_SUCCEED(Result), TEXT("NVSDK_NGX_VULKAN_AllocateParameters failed! (%u %s)"), Result, GetNGXResultAsString(Result));
-		}
-		else
-		{
-			NVSDK_NGX_Result Result = NVSDK_NGX_VULKAN_GetParameters(&NewNGXParameterHandle);
-			checkf(NVSDK_NGX_SUCCEED(Result), TEXT("NVSDK_NGX_VULKAN_GetParameters failed! (%u %s)"), Result, GetNGXResultAsString(Result));
-		}
+		NVSDK_NGX_Result Result = NVSDK_NGX_VULKAN_AllocateParameters(&NewNGXParameterHandle);
+		checkf(NVSDK_NGX_SUCCEED(Result), TEXT("NVSDK_NGX_VULKAN_AllocateParameters failed! (%u %s)"), Result, GetNGXResultAsString(Result));
 		
 		ApplyCommonNGXParameterSettings(NewNGXParameterHandle, InArguments);
 
@@ -242,7 +219,7 @@ void FNGXVulkanRHI::ExecuteDLSS(FRHICommandList& CmdList, const FRHIDLSSArgument
 	// execute
 	NVSDK_NGX_VK_DLSS_Eval_Params DlssEvalParams;
 	FMemory::Memzero(DlssEvalParams);
-	auto NGXVulkanResourceFromRHITexture = [](FRHITexture* InRHITexture)
+	auto NGXVulkanResourceFromRHITexture = [VulkanRHI=VulkanRHI](FRHITexture* InRHITexture)
 	{
 		check(InRHITexture);
 		if (FRHITextureReference* TexRef = InRHITexture->GetTextureReference())
@@ -251,7 +228,7 @@ void FNGXVulkanRHI::ExecuteDLSS(FRHICommandList& CmdList, const FRHIDLSSArgument
 			check(InRHITexture);
 		}
 
-		FVulkanTextureBase* VulkanTexture = static_cast<FVulkanTextureBase*>(InRHITexture->GetTextureBaseRHI());
+		const FVulkanRHIImageViewInfo ImageViewInfo = VulkanRHI->RHIGetImageViewInfo(InRHITexture);
 
 		NVSDK_NGX_Resource_VK NGXTexture;
 		FMemory::Memzero(NGXTexture);
@@ -259,26 +236,21 @@ void FNGXVulkanRHI::ExecuteDLSS(FRHICommandList& CmdList, const FRHIDLSSArgument
 		NGXTexture.Type = NVSDK_NGX_RESOURCE_VK_TYPE_VK_IMAGEVIEW;
 
 		// Check for VK_IMAGE_USAGE_STORAGE_BIT. Those are not directly stored but FVulkanSurface::GenerateImageCreateInfo sets the VK flag based on those UEFlags
-		NGXTexture.ReadWrite = EnumHasAnyFlags(VulkanTexture->Surface.UEFlags, TexCreate_Presentable | TexCreate_UAV);
+		NGXTexture.ReadWrite = EnumHasAnyFlags(ImageViewInfo.UEFlags, TexCreate_Presentable | TexCreate_UAV);
 
-		NGXTexture.Resource.ImageViewInfo.ImageView = VulkanTexture->DefaultView.View;
-		NGXTexture.Resource.ImageViewInfo.Image = VulkanTexture->DefaultView.Image;
-		NGXTexture.Resource.ImageViewInfo.Format = VulkanTexture->Surface.ViewFormat;
+		NGXTexture.Resource.ImageViewInfo.ImageView = ImageViewInfo.ImageView;
+		NGXTexture.Resource.ImageViewInfo.Image = ImageViewInfo.Image;
+		NGXTexture.Resource.ImageViewInfo.Format = ImageViewInfo.Format;
 
-		NGXTexture.Resource.ImageViewInfo.Width = VulkanTexture->Surface.Width;
-		NGXTexture.Resource.ImageViewInfo.Height = VulkanTexture->Surface.Height;
-		check(VulkanTexture->Surface.Depth == 1);
+		NGXTexture.Resource.ImageViewInfo.Width = ImageViewInfo.Width;
+		NGXTexture.Resource.ImageViewInfo.Height = ImageViewInfo.Height;
+		check(ImageViewInfo.Depth == 1);
 
-		NGXTexture.Resource.ImageViewInfo.SubresourceRange.aspectMask = VulkanTexture->Surface.GetFullAspectMask();
-
-		NGXTexture.Resource.ImageViewInfo.SubresourceRange.layerCount = VulkanTexture->Surface.GetNumberOfArrayLevels();
-		NGXTexture.Resource.ImageViewInfo.SubresourceRange.levelCount = VulkanTexture->Surface.GetNumMips();
+		NGXTexture.Resource.ImageViewInfo.SubresourceRange = ImageViewInfo.SubresourceRange;
 
 		// DLSS_TODO Figure out where to get those from if the textures are arrayed or mipped.
-		check(VulkanTexture->Surface.GetNumberOfArrayLevels() == 1);
-		check(VulkanTexture->Surface.GetNumMips() == 1);
-		NGXTexture.Resource.ImageViewInfo.SubresourceRange.baseMipLevel = 0;
-		NGXTexture.Resource.ImageViewInfo.SubresourceRange.baseArrayLayer = 0;
+		check(NGXTexture.Resource.ImageViewInfo.SubresourceRange.layerCount == 1);
+		check(NGXTexture.Resource.ImageViewInfo.SubresourceRange.levelCount == 1);
 
 		return NGXTexture;
 	};
@@ -334,15 +306,8 @@ void FNGXVulkanRHI::ExecuteDLSS(FRHICommandList& CmdList, const FRHIDLSSArgument
 	checkf(NVSDK_NGX_SUCCEED(ResultEvaluate), TEXT("NGX_Vulkan_EVALUATE_DLSS_EXT failed! (%u %s), %s"), ResultEvaluate, GetNGXResultAsString(ResultEvaluate), *InDLSSState->DLSSFeature->Desc.GetDebugDescription());
 	InDLSSState->DLSSFeature->Tick(FrameCounter);
 
-	if (FVulkanPlatform::RegisterGPUWork() && ImmediateContext.IsImmediate())
-	{
-		ImmediateContext.GetGPUProfiler().RegisterGPUWork(1);
-	}
-
-	
-
-	ImmediateContext.GetPendingComputeState()->Reset();
-	ImmediateContext.GetPendingGfxState()->Reset();
+	VulkanRHI->RHIRegisterWork(1);
+	VulkanRHI->RHIFinishExternalComputeWork(VulkanCommandBuffer);
 }
 
 

@@ -10,6 +10,7 @@
 */
 
 #include "VelocityCombinePass.h"
+#include "Runtime/Launch/Resources/Version.h"
 
 
 const int32 kVelocityCombineComputeTileSizeX = FComputeShaderUtils::kGolden2DGroupSize;
@@ -27,12 +28,7 @@ public:
 		return 	IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5) &&
 				IsPCPlatform(Parameters.Platform) && (
 					IsVulkanSM5Platform(Parameters.Platform) ||
-#if (ENGINE_MAJOR_VERSION == 4) && (ENGINE_MINOR_VERSION == 26)
-					IsD3DPlatform(Parameters.Platform, false));
-#else
 					IsD3DPlatform(Parameters.Platform));
-#endif
-				
 	}
 
 	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
@@ -55,11 +51,7 @@ public:
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, DepthTexture)
 		SHADER_PARAMETER_SAMPLER(SamplerState, DepthTextureSampler)
 
-#if DLSS_ENGINE_USES_FVECTOR2D
-		SHADER_PARAMETER(FVector2D, TemporalJitterPixels)
-#else
 		SHADER_PARAMETER(FVector2f, TemporalJitterPixels)
-#endif
 
 		SHADER_PARAMETER_STRUCT_REF(FViewUniformShaderParameters, View)
 		
@@ -124,12 +116,7 @@ FRDGTextureRef AddVelocityCombinePass(
 
 	// various state
 	{
-
-#if ENGINE_MAJOR_VERSION < 5
-		PassParameters->TemporalJitterPixels = View.TemporalJitterPixels;
-#else
 		PassParameters->TemporalJitterPixels = FVector2f(View.TemporalJitterPixels); // LWC_TODO: Precision loss
-#endif
 		PassParameters->View = View.ViewUniformBuffer;
 	}
 

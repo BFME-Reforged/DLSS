@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2020 - 2022 NVIDIA CORPORATION.  All rights reserved.
+* Copyright (c) 2020 - 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 *
 * NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
 * property and proprietary rights in and to this material, related
@@ -46,7 +46,7 @@ static TAutoConsoleVariable<int32> CVarNGXEnable(
 	TEXT("r.NGX.Enable"), 1,
 	TEXT("Whether the NGX library should be loaded. This allow to have the DLSS plugin enabled but avoiding potential ")
 	TEXT("incompatibilities by skipping the driver side NGX parts of DLSS. Can also be set on the command line via -ngxenable and -ngxdisable"),
-	ECVF_Default);
+	ECVF_ReadOnly);
 
 static TAutoConsoleVariable<int32> CVarNGXDLSSMinimumWindowsBuildVersion(
 	TEXT("r.NGX.DLSS.MinimumWindowsBuildVersion"), 16299,
@@ -102,8 +102,8 @@ public:
 	virtual void SetupView(FSceneViewFamily& InViewFamily, FSceneView& InView) {}
 	virtual void SetupViewPoint(APlayerController* Player, FMinimalViewInfo& InViewInfo) {}
 	virtual void BeginRenderViewFamily(FSceneViewFamily& InViewFamily) {}
-	virtual void PreRenderView_RenderThread(FRHICommandListImmediate& RHICmdList, FSceneView& InView) final {}
-	virtual void PreRenderViewFamily_RenderThread(FRHICommandListImmediate& RHICmdList, FSceneViewFamily& InViewFamily) final
+	virtual void PreRenderView_RenderThread(FRDGBuilder& GraphBuilder, FSceneView& InView) final {}
+	virtual void PreRenderViewFamily_RenderThread(FRDGBuilder& GraphBuilder, FSceneViewFamily& InViewFamily) final
 	{
 		int32 ViewIndex = CVarNGXAutomationViewIndex.GetValueOnRenderThread();
 
@@ -117,6 +117,7 @@ public:
 					View->ViewRotation.Pitch, View->ViewRotation.Roll, View->ViewRotation.Yaw);
 
 				static FColor ColorMarker = FColor::FromHex("0xA1A5E87");
+				FRHICommandListImmediate& RHICmdList = GraphBuilder.RHICmdList;
 				RHICmdList.PushEvent(*AiAgentMarker, ColorMarker);
 				RHICmdList.PopEvent();
 			}
@@ -124,41 +125,17 @@ public:
 	}
 };
 
-
-static bool IsCompatibleEngineVersion(FString& OutPluginVersion, FString& OutEngineVersion)
-{
-
-	// Binary incompatibility between 4.26.0 and 4.26.1, so check for the engine patch version at runtime here
-	// Engine loading code already checks for compatibility for major/minor/changelist
-	// Written so that no code change will be needed for future engine versions if compatibility isn't broken again
-	FEngineVersion Version = FEngineVersion::Current();
-
-	OutEngineVersion = FString::Printf(TEXT("%u.%u.%u"), Version.GetMajor(), Version.GetMinor(), Version.GetPatch());
-	OutPluginVersion = FString::Printf(TEXT("%u.%u.%u"), ENGINE_MAJOR_VERSION, ENGINE_MINOR_VERSION, ENGINE_PATCH_VERSION);
-#if ENGINE_MAJOR_VERSION == 4
-	#if ENGINE_MINOR_VERSION == 26
-		#if ENGINE_PATCH_VERSION == 0
-			// 4.26.0
-			return Version.GetPatch() == 0;
-		#else
-			// 4.26.x, x > 0
-			return Version.GetPatch() >= 1;
-		#endif
-	#else
-		// 4.x._, x > 26
-		return true;
-	#endif
-#elif ENGINE_MAJOR_VERSION == 5
-	return true;
-#else
-#error "ENGINE_MAJOR_VERSION must be either 4 or 5"
-#endif
-}
-
 void FDLSSModule::StartupModule()
 {
 	// This code will execute after your module is loaded into memory; the exact timing is specified in the .uplugin file per-module
 	UE_LOG(LogDLSS, Log, TEXT("%s Enter"), ANSI_TO_TCHAR(__FUNCTION__));
+
+	if (!GDynamicRHI)
+	{
+		UE_LOG(LogDLSS, Log, TEXT("NVIDIA NGX DLSS requires an RHI"));
+		DLSSSupport = EDLSSSupport::NotSupported;
+		return;
+	}
 
 	// Get the base directory of this plugin
 	const FString PluginBaseDir = IPluginManager::Get().FindPlugin(TEXT("DLSS"))->GetBaseDir();
@@ -181,36 +158,7 @@ void FDLSSModule::StartupModule()
 
 	const int32 NGXDLSSMinimumWindowsBuildVersion = CVarNGXDLSSMinimumWindowsBuildVersion.GetValueOnAnyThread();
 	
-
-	FString PluginVersion;
-	FString EngineVersion; 
-
-	if (!IsCompatibleEngineVersion(PluginVersion, EngineVersion))
-	{
-		FEngineVersion Version = FEngineVersion::Current();
-		UE_LOG(LogDLSS, Error,
-			TEXT("This prebuilt binary distribution version %s of the NVIDIA DLSS plugin is not compatible with the current engine version %s"),
-			*PluginVersion, *EngineVersion);
-		UE_LOG(LogDLSS, Error, TEXT("Build the DLSS plugin from source (e.g. via the Editor -> Plugins -> NVIDIA DLSS -> Package)"));
-		DLSSSupport = EDLSSSupport::NotSupported;
-		
-// we don't want this ever show up in packaged builds
-#if WITH_EDITOR
-		const bool IsUnattended = FApp::IsUnattended() || IsRunningCommandlet() || GIsRunningUnattendedScript;
-		if (!IsUnattended )
-		{
-			const FText DialogTitle(LOCTEXT("DLSSIncompatibleEngineVersionTitle", "Error - DLSS plugin incompatible with engine"));
-			
-			const FTextFormat Format(LOCTEXT("DLSSIncompatibleEngineVersion", 
-				"The binary version {0} of this DLSS Unreal Engine Plugin is not compatible with the binary version {1} of this Unreal Engine installation. \n\n"
-				"Please build the DLSS plugin from source (e.g. via the Editor -> Plugins -> NVIDIA DLSS -> Package)"));
-			const FText WarningMessage = FText::Format(Format, FText::FromString(PluginVersion), FText::FromString(EngineVersion));
-
-			FMessageDialog::Open(EAppMsgType::Ok,WarningMessage, &DialogTitle);
-		}
-#endif //WITH_EDITOR
-	}
-	else if (!IsRHIDeviceNVIDIA())
+	if (!IsRHIDeviceNVIDIA())
 	{
 		UE_LOG(LogDLSS, Log, TEXT("NVIDIA NGX DLSS requires an NVIDIA RTX series graphics card"));
 		DLSSSupport = EDLSSSupport::NotSupportedIncompatibleHardware;
@@ -234,9 +182,11 @@ void FDLSSModule::StartupModule()
 	}
 	else
 	{
-		const bool bIsDX12 = (RHIName == TEXT("D3D12")) && GetDefault<UDLSSSettings>()->bEnableDLSSD3D12;
-		const bool bIsDX11 = (RHIName == TEXT("D3D11")) && GetDefault<UDLSSSettings>()->bEnableDLSSD3D11;
-		const bool bIsVulkan = (RHIName == TEXT("Vulkan")) && GetDefault<UDLSSSettings>()->bEnableDLSSVulkan;
+		const ERHIInterfaceType RHIType = RHIGetInterfaceType();
+
+		const bool bIsDX12 = (RHIType == ERHIInterfaceType::D3D12) && GetDefault<UDLSSSettings>()->bEnableDLSSD3D12;
+		const bool bIsDX11 = (RHIType == ERHIInterfaceType::D3D11) && GetDefault<UDLSSSettings>()->bEnableDLSSD3D11;
+		const bool bIsVulkan = (RHIType == ERHIInterfaceType::Vulkan) && GetDefault<UDLSSSettings>()->bEnableDLSSVulkan;
 		const TCHAR* NGXRHIModuleName = nullptr;
 
 		DLSSSupport = (bIsDX11 || bIsDX12 || bIsVulkan) ? EDLSSSupport::Supported : EDLSSSupport::NotSupported; 
@@ -253,7 +203,6 @@ void FDLSSModule::StartupModule()
 			}
 			else if (bIsVulkan)
 			{
-				// TODO Vulkan (which might need a second, pre RHI init module to route the required vulkan extensions to the VulkanRHI, similar to the HMD stuff
 				NGXRHIModuleName = TEXT("NGXVulkanRHI");
 			}
 
@@ -352,6 +301,8 @@ void FDLSSModule::StartupModule()
 				}
 
 				const FNGXDriverRequirements DriverRequirements = NGXRHIExtensions->GetDLSSDriverRequirements();
+				MinDriverVersionMajor = DriverRequirements.MinDriverVersionMajor;
+				MinDriverVersionMinor = DriverRequirements.MinDriverVersionMinor;
 				if (DriverRequirements.DriverUpdateRequired)
 				{
 					if (DLSSSupport == EDLSSSupport::Supported)
@@ -400,13 +351,6 @@ void FDLSSModule::StartupModule()
 				DLSSUpscaler.Reset();
 				NGXRHIExtensions.Reset();
 			}
-#if DLSS_ENGINE_HAS_GTEMPORALUPSCALER
-			else
-			{
-				checkf(GTemporalUpscaler == ITemporalUpscaler::GetDefaultTemporalUpscaler(), TEXT("GTemporalUpscaler is not set to the default upscaler. Please check that only one upscaling plugin is active."));
-				GTemporalUpscaler = DLSSUpscaler.Get();
-			}
-#endif
 		}
 	}
 
@@ -416,6 +360,11 @@ void FDLSSModule::StartupModule()
 
 	if (DLSSSupport == EDLSSSupport::Supported)
 	{
+		//	set up the view extension for setting up the FDLSSUpscaler on FSceneViewFamily
+		{
+			DLSSUpscalerViewExtension = FSceneViewExtensions::NewExtension<FDLSSUpscalerViewExtension>();
+		}
+
 		// set the denoiser
 		{
 
@@ -428,12 +377,6 @@ void FDLSSModule::StartupModule()
 			DLSSDenoiser.Reset(new FDLSSDenoiser(GScreenSpaceDenoiser, DLSSUpscaler.Get()));
 			GScreenSpaceDenoiser = DLSSDenoiser.Get();
 			UE_LOG(LogDLSS, Log, TEXT("%s wrapping %s"), DLSSDenoiser->GetDebugName(), DLSSDenoiser->GetWrappedDenoiser()->GetDebugName());
-		}
-		
-		// set the screen percentage driver for game views
-		{
-			checkf(GCustomStaticScreenPercentage == nullptr, TEXT("GCustomStaticScreenPercentage is already in use. Please check that only one upscaling plugin is active."));
-			GCustomStaticScreenPercentage = DLSSUpscaler.Get();
 		}
 
 		// set the resource pool
@@ -462,17 +405,19 @@ void FDLSSModule::ShutdownModule()
 
 	if (QueryDLSSSupport() == EDLSSSupport::Supported)
 	{
+		// reset the view extension
+		{
+			DLSSUpscalerViewExtension = nullptr;
+		}
+
 		// reset the resource pool
+		if (GCustomResourcePool == DLSSUpscaler.Get())
 		{
 			GCustomResourcePool = nullptr;
 		}
 
-		// reset the screen percentage driver for game views
-		{
-			GCustomStaticScreenPercentage = nullptr;
-		}
-
 		// reset the denoiser
+		if (GScreenSpaceDenoiser == DLSSDenoiser.Get())
 		{
 			UE_LOG(LogDLSS, Log, TEXT("%s unwrapping %s"), DLSSDenoiser->GetDebugName(), DLSSDenoiser->GetWrappedDenoiser()->GetDebugName());
 			GScreenSpaceDenoiser = DLSSDenoiser->GetWrappedDenoiser();
@@ -481,9 +426,6 @@ void FDLSSModule::ShutdownModule()
 
 		// reset the upscaler
 		{
-#if DLSS_ENGINE_HAS_GTEMPORALUPSCALER
-			GTemporalUpscaler = ITemporalUpscaler::GetDefaultTemporalUpscaler();
-#endif
 			FDLSSUpscaler::ReleaseStaticResources();
 			DLSSUpscaler.Reset();
 		}
@@ -518,6 +460,11 @@ float FDLSSModule::GetResolutionFractionForQuality(int32 Quality) const
 FDLSSUpscaler* FDLSSModule::GetDLSSUpscaler() const
 {
 	return DLSSUpscaler.Get();
+}
+
+TSharedPtr< ISceneViewExtension, ESPMode::ThreadSafe> FDLSSModule::GetDLSSUpscalerViewExtension() const
+{
+	return StaticCastSharedPtr<ISceneViewExtension>(DLSSUpscalerViewExtension);
 }
 
 #undef LOCTEXT_NAMESPACE

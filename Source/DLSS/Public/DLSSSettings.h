@@ -13,8 +13,7 @@
 #include "UObject/ObjectMacros.h"
 #include "UObject/Object.h"
 #include "Engine/DeveloperSettings.h"
-#include "CustomStaticScreenPercentage.h"
-#include "Runtime/Launch/Resources/Version.h"
+#include "SceneView.h"
 
 #include "DLSSSettings.generated.h"
 
@@ -33,24 +32,20 @@ public:
 
 	GENERATED_BODY()
 	
-	/** This enables DLSS in editor viewports. Saved to local user config only.*/
-	UPROPERTY(Config, EditAnywhere, Category = "Level Editor - Viewport (Local)", DisplayName = "Enable DLSS to be turned on in Editor viewports")
+	/** This enables DLSS/DLAA in editor viewports. Saved to local user config only.*/
+	UPROPERTY(Config, EditAnywhere, Category = "Level Editor - Viewport (Local)", DisplayName = "Enable DLSS/DLAA to be turned on in Editor viewports")
 	EDLSSSettingOverride EnableDLSSInEditorViewportsOverride = EDLSSSettingOverride::UseProjectSettings;
 
-	/** This setting enables adjusting the screenpercentage directly in the editor, outside of the optimized DLSS quality modes. Saved to local user config only.*/
-	UPROPERTY(Config, EditAnywhere, Category = "Level Editor - Viewport (Local)", DisplayName = "Enable Screenpercentage Manipulation in DLSS Editor Viewports")
-	EDLSSSettingOverride EnableScreenpercentageManipulationInDLSSEditorViewportsOverride = EDLSSSettingOverride::UseProjectSettings;
-
-	/** This enables DLSS in play in editor viewports. Saved to local user config only. */
-	UPROPERTY(Config, EditAnywhere, Category = "Level Editor - Viewport (Local)", DisplayName = "Enable DLSS in Play In Editor viewports")
+	/** This enables DLSS/DLAA in play in editor viewports. Saved to local user config only. */
+	UPROPERTY(Config, EditAnywhere, Category = "Level Editor - Viewport (Local)", DisplayName = "Enable DLSS/DLAA in Play In Editor viewports")
 	EDLSSSettingOverride EnableDLSSInPlayInEditorViewportsOverride = EDLSSSettingOverride::UseProjectSettings;
 
-	/** This enables warnings about plugins & tools that are incompatible with DLSS in the editor. Saved to local user config only. */
+	/** This enables warnings about plugins & tools that are incompatible with DLSS/DLAA in the editor. Saved to local user config only. */
 	UPROPERTY(Config, EditAnywhere, Category = "Editor (Local)", DisplayName = "Warn about incompatible plugins and tools")
 	bool bShowDLSSIncompatiblePluginsToolsWarnings = true;
 
-	/** This enables on screen warnings and errors about DLSS  */
-	UPROPERTY(Config, EditAnywhere, Category = "Editor (Local)", DisplayName = "Show various DLSS on screen debug messages")
+	/** This enables on screen warnings and errors about DLSS/DLAA  */
+	UPROPERTY(Config, EditAnywhere, Category = "Editor (Local)", DisplayName = "Show various DLSS/DLAA on screen debug messages")
 	EDLSSSettingOverride ShowDLSSSDebugOnScreenMessages = EDLSSSettingOverride::UseProjectSettings;
 
 };
@@ -64,32 +59,28 @@ private:
 
 public:
 
-	/** Enable DLSS for D3D12, if the driver supports it at runtime */
-	UPROPERTY(Config, EditAnywhere, Category = "Platforms", DisplayName = "Enable DLSS for the D3D12RHI")
+	/** Enable DLSS/DLAA for D3D12, if the driver supports it at runtime */
+	UPROPERTY(Config, EditAnywhere, Category = "Platforms", DisplayName = "Enable DLSS/DLAA for the D3D12RHI")
 		bool bEnableDLSSD3D12 = PLATFORM_WINDOWS;
 
-	/** Enable DLSS for D3D11, if the driver supports it at runtime */
-	UPROPERTY(Config, EditAnywhere, Category = "Platforms", DisplayName = "Enable DLSS for the D3D11RHI")
+	/** Enable DLSS/DLAA for D3D11, if the driver supports it at runtime */
+	UPROPERTY(Config, EditAnywhere, Category = "Platforms", DisplayName = "Enable DLSS/DLAA for the D3D11RHI")
 		bool bEnableDLSSD3D11 = PLATFORM_WINDOWS;
 
-	/** Enable DLSS for Vulkan, if the driver supports it at runtime */
-	UPROPERTY(Config, EditAnywhere, Category = "Platforms", DisplayName = "Enable DLSS for the VulkanRHI")
+	/** Enable DLSS/DLAA for Vulkan, if the driver supports it at runtime */
+	UPROPERTY(Config, EditAnywhere, Category = "Platforms", DisplayName = "Enable DLSS/DLAA for the VulkanRHI")
 		bool bEnableDLSSVulkan = PLATFORM_WINDOWS;
 
-	/** This enables DLSS in editor viewports. This project wide setting can be locally overridden in the NVIDIA DLSS (Local) settings.*/
-	UPROPERTY(Config, EditAnywhere, Category = "Level Editor - Viewport", DisplayName = "Enable DLSS to be turned on in Editor viewports")
-		bool bEnableDLSSInEditorViewports = true;
+	/** This enables DLSS/DLAA in editor viewports. This project wide setting can be locally overridden in the NVIDIA DLSS (Local) settings.*/
+	UPROPERTY(Config, EditAnywhere, Category = "Level Editor - Viewport", DisplayName = "Enable DLSS/DLAA to be turned on in Editor viewports")
+		bool bEnableDLSSInEditorViewports = false;
 
-	/** This setting enables adjusting the screenpercentage directly in the editor, outside of the optimized DLSS quality modes. This project wide setting can be locally overridden in the NVIDIA DLSS (Local) settings.*/
-	UPROPERTY(Config = Editor, EditAnywhere, Category = "Level Editor - Viewport", DisplayName = "Enable Screenpercentage Manipulation in DLSS Editor Viewports")
-		bool bEnableScreenpercentageManipulationInDLSSEditorViewports = false;
-
-	/** This enables DLSS in play in editor viewports. This project wide setting can be locally overridden in in the NVIDIA DLSS (Local) settings.*/
-	UPROPERTY(Config, EditAnywhere, Category = "Level Editor - Viewport", DisplayName = "Enable DLSS in Play In Editor viewports")
+	/** This enables DLSS/DLAA in play in editor viewports. This project wide setting can be locally overridden in in the NVIDIA DLSS (Local) settings.*/
+	UPROPERTY(Config, EditAnywhere, Category = "Level Editor - Viewport", DisplayName = "Enable DLSS/DLAA in Play In Editor viewports")
 		bool bEnableDLSSInPlayInEditorViewports = true;
 
-	/** This enables on screen warnings and errors about DLSS. This project wide setting can be locally overridden in the NVIDIA DLSS (Local) settings. */
-	UPROPERTY(Config, EditAnywhere, Category = "Level Editor - Viewport", DisplayName = "Show various DLSS on screen debug messages")
+	/** This enables on screen warnings and errors about DLSS/DLAA. This project wide setting can be locally overridden in the NVIDIA DLSS (Local) settings. */
+	UPROPERTY(Config, EditAnywhere, Category = "Level Editor - Viewport", DisplayName = "Show various DLSS/DLAA on screen debug messages")
 		bool bShowDLSSSDebugOnScreenMessages = true;
 
 	/** This is part of the DLSS plugin and used by most projects*/
@@ -99,7 +90,7 @@ public:
 	UPROPERTY(VisibleAnywhere, Config, Category = "General Settings", DisplayName = "Exists")
 		bool bGenericDLSSBinaryExists;
 
-	/** By default the DLSS plugin uses the UE Project ID to initalize DLSS. In some cases NVIDIA might provide a separate NVIDIA Application ID, which should be put here. Please refer to https://developer.nvidia.com/dlss for details*/
+	/** By default the DLSS plugin uses the UE Project ID to initialize DLSS. In some cases NVIDIA might provide a separate NVIDIA Application ID, which should be put here. Please refer to https://developer.nvidia.com/dlss for details*/
 	UPROPERTY(Config, EditAnywhere, Category = "General Settings", DisplayName = "NVIDIA NGX Application ID", AdvancedDisplay)
 		uint32 NVIDIANGXApplicationId;
 
@@ -110,12 +101,3 @@ public:
 		bool bCustomDLSSBinaryExists;
 };
 
-// This is publically defined in the .Build.cs so it can key off branch names, which is not feasible to do with the preprocessor
-#if DLSS_ENGINE_SUPPORTS_CSSPD
-class FDLSSViewportQualitySetting final : public ICustomStaticScreenPercentageData
-{
-public:
-	int32 QualitySetting = 0;
-	bool bDLAAEnabled = false;
-};
-#endif

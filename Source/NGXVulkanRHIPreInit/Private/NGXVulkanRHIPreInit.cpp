@@ -1,27 +1,17 @@
 /*
-* Copyright (c) 2020 - 2021 NVIDIA CORPORATION.  All rights reserved.
+* Copyright (c) 2020 - 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 *
-* NVIDIA Corporation and its licensors retain all intellectual property and proprietary
-* rights in and to this software, related documentation and any modifications thereto.
-* Any use, reproduction, disclosure or distribution of this software and related
-* documentation without an express license agreement from NVIDIA Corporation is strictly
-* prohibited.
-*
-* TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, THIS SOFTWARE IS PROVIDED *AS IS*
-* AND NVIDIA AND ITS SUPPLIERS DISCLAIM ALL WARRANTIES, EITHER EXPRESS OR IMPLIED,
-* INCLUDING, BUT NOT LIMITED TO, IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
-* PARTICULAR PURPOSE.  IN NO EVENT SHALL NVIDIA OR ITS SUPPLIERS BE LIABLE FOR ANY
-* SPECIAL, INCIDENTAL, INDIRECT, OR CONSEQUENTIAL DAMAGES WHATSOEVER (INCLUDING, WITHOUT
-* LIMITATION, DAMAGES FOR LOSS OF BUSINESS PROFITS, BUSINESS INTERRUPTION, LOSS OF
-* BUSINESS INFORMATION, OR ANY OTHER PECUNIARY LOSS) ARISING OUT OF THE USE OF OR
-* INABILITY TO USE THIS SOFTWARE, EVEN IF NVIDIA HAS BEEN ADVISED OF THE POSSIBILITY OF
-* SUCH DAMAGES.
+* NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
+* property and proprietary rights in and to this material, related
+* documentation and any modifications thereto. Any use, reproduction,
+* disclosure or distribution of this material and related documentation
+* without an express license agreement from NVIDIA CORPORATION or
+* its affiliates is strictly prohibited.
 */
 
 #include "NGXVulkanRHIPreInit.h"
 
-#include "VulkanRHIPrivate.h"
-#include "VulkanRHIBridge.h"
+#include "IVulkanDynamicRHI.h"
 
 #include "DynamicRHI.h"
 
@@ -57,11 +47,11 @@ void FNGXVulkanRHIPreInitModule::StartupModule()
 				const NVSDK_NGX_Result ResultRequiredExtensions = NVSDK_NGX_VULKAN_RequiredExtensions(&NumInstanceExtensions, &InstanceExtensions, &NumDeviceExtensions, &DeviceExtensions);
 				UE_LOG(LogDLSSNGXVulkanRHIPreInit, Log, TEXT("NVSDK_NGX_VULKAN_RequiredExtensions -> (%u %s)"), ResultRequiredExtensions, GetNGXResultAsString(ResultRequiredExtensions));
 
-				const TArray<const ANSICHAR*> RHIBridgeInstanceExtensions(InstanceExtensions, NumInstanceExtensions);
-				VulkanRHIBridge::AddEnabledInstanceExtensionsAndLayers(RHIBridgeInstanceExtensions, TArray<const ANSICHAR*>());
+				const TArrayView<const ANSICHAR* const> RHIBridgeInstanceExtensions(InstanceExtensions, NumInstanceExtensions);
+				IVulkanDynamicRHI::AddEnabledInstanceExtensionsAndLayers(RHIBridgeInstanceExtensions, TArrayView<const ANSICHAR* const>());
 
-				const TArray<const ANSICHAR*> RHIBridgeDeviceExtensions(DeviceExtensions, NumDeviceExtensions);
-				VulkanRHIBridge::AddEnabledDeviceExtensionsAndLayers(RHIBridgeDeviceExtensions, TArray<const ANSICHAR*>());
+				const TArrayView<const ANSICHAR* const> RHIBridgeDeviceExtensions(DeviceExtensions, NumDeviceExtensions);
+				IVulkanDynamicRHI::AddEnabledDeviceExtensionsAndLayers(RHIBridgeDeviceExtensions, TArrayView<const ANSICHAR* const>());
 
 				UE_LOG(LogDLSSNGXVulkanRHIPreInit, Log, TEXT("Preregistered the required NGX DLSS Vulkan device extensions (%u) and instance extensions (%u) via the VulkanRHIBridge"), NumDeviceExtensions, NumInstanceExtensions);
 			}

@@ -21,7 +21,6 @@
 #include "DLSSEditor.h"
 
 #include "DLSSUpscaler.h"
-#include "DLSSUpscalerEditor.h"
 #include "DLSS.h"
 #include "DLSSSettings.h"
 #include "NGXRHI.h"
@@ -50,14 +49,6 @@ void FDLSSEditorModule::StartupModule()
 		UE_LOG(LogDLSSEditor, Log, TEXT("DLSS module %p, QueryDLSSSupport = %u DLSSUpscaler = %p"), DLSSModule, DLSSModule->QueryDLSSSupport(), DLSSModule->GetDLSSUpscaler());
 		
 		bIsDLSSAvailable = DLSSModule->QueryDLSSSupport() == EDLSSSupport::Supported;
-		if (bIsDLSSAvailable)
-		{
-			checkf(GCustomStaticScreenPercentage == DLSSModule->GetDLSSUpscaler(),TEXT("GCustomStaticScreenPercentage is not set to the DLSS upscaler. Please check that only one upscaling plugin is active."));
-
-			DLSSUpscalerEditor = MakeShared<FDLSSUpscalerEditor>(DLSSModule->GetDLSSUpscaler());
-			checkf(GCustomEditorStaticScreenPercentage == nullptr, TEXT("GCustomEditorStaticScreenPercentage is already in use. Please check that only one upscaling active is active."));
-			GCustomEditorStaticScreenPercentage = DLSSUpscalerEditor.Get();
-		}
 	}
 
 	// register settings
@@ -104,18 +95,7 @@ void FDLSSEditorModule::ShutdownModule()
 {
 	UE_LOG(LogDLSSEditor, Log, TEXT("%s Enter"), ANSI_TO_TCHAR(__FUNCTION__));
 	
-	if (bIsDLSSAvailable)
-	{
-		GCustomEditorStaticScreenPercentage = nullptr;
-		DLSSUpscalerEditor = nullptr;
-	}
-
 	UE_LOG(LogDLSSEditor, Log, TEXT("%s Leave"), ANSI_TO_TCHAR(__FUNCTION__));
-}
-
-FDLSSUpscalerEditor* FDLSSEditorModule::GetDLSSUpscalerEditor() const
-{
-	return DLSSUpscalerEditor.Get();
 }
 
 #undef LOCTEXT_NAMESPACE

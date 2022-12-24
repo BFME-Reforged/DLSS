@@ -12,13 +12,12 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "SceneViewExtension.h"
 #include "RendererInterface.h"
 #include "PostProcess/TemporalAA.h"
 #include "ScreenPass.h"
 #include "NGXRHI.h"
-#include "DLSSSettings.h"
 
-#include "CustomStaticScreenPercentage.h"
 #include "CustomResourcePool.h"
 
 class FSceneTextureParameters;
@@ -28,6 +27,8 @@ struct FTemporalAAHistory;
 class FRHITexture;
 class NGXRHI;
 struct FDLSSOptimalSettings;
+class FDLSSUpscaler;
+
 struct FDLSSPassParameters
 {
 	FIntRect InputViewRect;
@@ -68,44 +69,61 @@ enum class EDLSSQualityMode
 	NumValues = 5
 };
 
-class DLSS_API FDLSSUpscaler final : public ITemporalUpscaler, public ICustomStaticScreenPercentage, public ICustomResourcePool
+class DLSS_API FDLSSUpscalerViewExtension final : public FSceneViewExtensionBase
+{
+public:
+	FDLSSUpscalerViewExtension(const FAutoRegister& AutoRegister) : FSceneViewExtensionBase(AutoRegister)
+	{ }
+
+	virtual void SetupViewFamily(FSceneViewFamily& InViewFamily) override {}
+	virtual void SetupView(FSceneViewFamily& InViewFamily, FSceneView& InView) override {}
+	virtual void BeginRenderViewFamily(FSceneViewFamily& InViewFamily) override;
+	virtual void PreRenderView_RenderThread(FRDGBuilder& GraphBuilder, FSceneView& InView) final override {}
+	virtual void PreRenderViewFamily_RenderThread(FRDGBuilder& GraphBuilder, FSceneViewFamily& InViewFamily) final override {}
+	virtual bool IsActiveThisFrame_Internal(const FSceneViewExtensionContext& Context) const override;
+};
+
+class DLSS_API FDLSSSceneViewFamilyUpscaler final : public ITemporalUpscaler
+{
+public:
+	FDLSSSceneViewFamilyUpscaler(const FDLSSUpscaler* InUpscaler, EDLSSQualityMode InDLSSQualityMode)
+		: Upscaler(InUpscaler)
+		, DLSSQualityMode(InDLSSQualityMode)
+	{ }
+
+	virtual const TCHAR* GetDebugName() const final override;
+	virtual float GetMinUpsampleResolutionFraction() const final override;
+	virtual float GetMaxUpsampleResolutionFraction() const final override;
+	virtual ITemporalUpscaler* Fork_GameThread(const class FSceneViewFamily& ViewFamily) const final override;
+	virtual ITemporalUpscaler::FOutputs AddPasses(
+		FRDGBuilder& GraphBuilder,
+		const FViewInfo& View,
+		const FPassInputs& PassInputs) const final override;
+
+	static bool IsDLSSTemporalUpscaler(const ITemporalUpscaler* TemporalUpscaler);
+
+private:
+	const FDLSSUpscaler* Upscaler;
+	const EDLSSQualityMode DLSSQualityMode;
+
+	FDLSSOutputs AddDLSSPass(
+		FRDGBuilder& GraphBuilder,
+		const FViewInfo& View,
+		const FDLSSPassParameters& Inputs,
+		const FTemporalAAHistory& InputHistory,
+		FTemporalAAHistory* OutputHistory,
+		const TRefCountPtr<ICustomTemporalAAHistory> InputCustomHistoryInterface,
+		TRefCountPtr<ICustomTemporalAAHistory>* OutputCustomHistoryInterface
+	) const;
+};
+
+class DLSS_API FDLSSUpscaler final : public ICustomResourcePool
 {
 
 	friend class FDLSSModule;
 public:
 
-
-	FDLSSUpscaler(const FDLSSUpscaler* InUpscaler, EDLSSQualityMode InQualityMode);
-	virtual ~FDLSSUpscaler();
-	// Inherited via ITemporalUpscaler
-	virtual const TCHAR* GetDebugName() const final;
-
-#if DLSS_ENGINE_ADDPASSES_RETURN_THROUGH_PARAMS
-	virtual void AddPasses(
-#else
-	virtual ITemporalUpscaler::FOutputs AddPasses(
-#endif
-		FRDGBuilder& GraphBuilder,
-		const FViewInfo& View,
-		const FPassInputs& PassInputs
-#if DLSS_ENGINE_ADDPASSES_RETURN_THROUGH_PARAMS
-		, FRDGTextureRef* OutSceneColorTexture
-		, FIntRect* OutSceneColorViewRect
-		, FRDGTextureRef* OutSceneColorHalfResTexture
-		, FIntRect* OutSceneColorHalfResViewRect
-#endif
-	) const final;
-
-	// Inherited via ICustomStaticScreenPercentage
-	virtual void SetupMainGameViewFamily(FSceneViewFamily& ViewFamily) final;
-
-#if DLSS_ENGINE_SUPPORTS_CSSPD
-	/** Allows to setup View Family directly. To be used by modules that are aware of DLSS Plugin. */
-	virtual void SetupViewFamily(FSceneViewFamily& ViewFamily, TSharedPtr<ICustomStaticScreenPercentageData> InScreenPercentageDataInterface) final;
-#endif
-
-	virtual float GetMinUpsampleResolutionFraction() const final;
-	virtual float GetMaxUpsampleResolutionFraction() const final;
+	void SetupViewFamily(FSceneViewFamily& ViewFamily);
 
 	float GetOptimalResolutionFractionForQuality(EDLSSQualityMode Quality) const;
 	float GetOptimalSharpnessForQuality(EDLSSQualityMode Quality) const;
@@ -129,61 +147,40 @@ public:
 
 	bool IsDLSSActive() const;
 
-	static FDLSSUpscaler* GetUpscalerInstanceForViewFamily(const FDLSSUpscaler* InUpscaler, EDLSSQualityMode InQualityMode);
-	static bool IsValidUpscalerInstance(const ITemporalUpscaler* InUpscaler);
-
 	static bool IsDLAAMode();
-	static bool IsAutoQualityMode();
-	static void SetAutoQualityMode(bool bAutoQualityMode);
 
 	// Give the suggested EDLSSQualityMode if one is appropriate for the given pixel count, or nothing if DLSS should be disabled
 	TOptional<EDLSSQualityMode> GetAutoQualityModeFromPixels(int PixelCount) const;
 
 	static void ReleaseStaticResources();
 
+	static float GetMinUpsampleResolutionFraction()
+	{
+		return MinDynamicResolutionFraction;
+	}
+
+	static float GetMaxUpsampleResolutionFraction()
+	{
+		return MaxDynamicResolutionFraction;
+	}
+
 private:
 	FDLSSUpscaler(NGXRHI* InNGXRHIExtensions);
 	FDLSSUpscaler(const FDLSSUpscaler&) = default;
 	
 
-	EDLSSQualityMode GetSupportedQualityModeFromCVarValue(int32 InCVarValue) const
-	{
-		checkf(NumRuntimeQualityModes, TEXT("This should only be called from the higher level code when DLSS is supported") );
-		static_assert(int32(EDLSSQualityMode::NumValues) == 5, "dear DLSS plugin NVIDIA developer, please update this code to handle the new EDLSSQualityMode enum values");
-		for (auto QualityMode : { EDLSSQualityMode::UltraPerformance,  EDLSSQualityMode::Performance , EDLSSQualityMode::Balanced, EDLSSQualityMode::Quality,  EDLSSQualityMode::UltraQuality })
-		{
-			if (InCVarValue == static_cast<int32>(QualityMode) && IsQualityModeSupported(QualityMode))
-			{
-				return QualityMode;
-			}
-		}
-		return EDLSSQualityMode::Balanced;
-	}
-
-	TOptional<EDLSSQualityMode> GetAutoQualityModeFromViewFamily(const FSceneViewFamily& ViewFamily) const;
-	
 	bool EnableDLSSInPlayInEditorViewports() const;
-	FDLSSOutputs AddDLSSPass(
-		FRDGBuilder& GraphBuilder,
-		const FViewInfo& View,
-		const FDLSSPassParameters& Inputs,
-		const FTemporalAAHistory& InputHistory,
-		FTemporalAAHistory* OutputHistory,
-		const TRefCountPtr<ICustomTemporalAAHistory> InputCustomHistoryInterface,
-		TRefCountPtr<ICustomTemporalAAHistory>* OutputCustomHistoryInterface
-	) const;
-
-
-
-	EDLSSQualityMode DLSSQualityMode = EDLSSQualityMode::NumValues;
 
 	// The FDLSSUpscaler(NGXRHI*) will update those once
 	static NGXRHI* NGXRHIExtensions;
-	static float MinResolutionFraction;
-	static float MaxResolutionFraction;	
+	static float MinDynamicResolutionFraction;
+	static float MaxDynamicResolutionFraction;
 
 	static uint32 NumRuntimeQualityModes;
 	static TArray<FDLSSOptimalSettings> ResolutionSettings;
+	float PreviousResolutionFraction;
 
-	static TStaticArray <TSharedPtr<FDLSSUpscaler>, uint32(EDLSSQualityMode::NumValues)> DLSSUpscalerInstancesPerViewFamily;
+	friend class FDLSSUpscalerViewExtension;
+	friend class FDLSSSceneViewFamilyUpscaler;
 };
+

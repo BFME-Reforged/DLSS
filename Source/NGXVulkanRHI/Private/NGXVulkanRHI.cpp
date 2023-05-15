@@ -74,18 +74,18 @@ NVSDK_NGX_Result FNGXVulkanRHI::Init_NGX_VK(const FNGXRHICreateArguments& InArgu
 	{
 		if (InArguments.InitializeNGXWithNGXApplicationID())
 		{
-			Result = NVSDK_NGX_VULKAN_Init(InArguments.NGXAppId, InApplicationDataPath, InInstance, InPD, InDevice, InFeatureInfo, static_cast<NVSDK_NGX_Version>(APIVersion));
+			Result = NVSDK_NGX_VULKAN_Init(InArguments.NGXAppId, InApplicationDataPath, InInstance, InPD, InDevice, nullptr, nullptr, InFeatureInfo, static_cast<NVSDK_NGX_Version>(APIVersion));
 			UE_LOG(LogDLSSNGXVulkanRHI, Log, TEXT("NVSDK_NGX_VULKAN_Init(AppID= %u, APIVersion = 0x%x) -> (%u %s)"), InArguments.NGXAppId, APIVersion, Result, GetNGXResultAsString(Result));
 		}
 		else
 		{
-			Result = NVSDK_NGX_VULKAN_Init_with_ProjectID(TCHAR_TO_UTF8(*InArguments.UnrealProjectID), NVSDK_NGX_ENGINE_TYPE_UNREAL, TCHAR_TO_UTF8(*InArguments.UnrealEngineVersion), InApplicationDataPath, InInstance, InPD, InDevice, InFeatureInfo, static_cast<NVSDK_NGX_Version>(APIVersion));
+			Result = NVSDK_NGX_VULKAN_Init_with_ProjectID(TCHAR_TO_UTF8(*InArguments.UnrealProjectID), NVSDK_NGX_ENGINE_TYPE_UNREAL, TCHAR_TO_UTF8(*InArguments.UnrealEngineVersion), InApplicationDataPath, InInstance, InPD, InDevice, nullptr, nullptr, InFeatureInfo, static_cast<NVSDK_NGX_Version>(APIVersion));
 			UE_LOG(LogDLSSNGXVulkanRHI, Log, TEXT("NVSDK_NGX_VULKAN_Init(ProjectID = %s, EngineVersion=%s, APIVersion = 0x%x) -> (%u %s)"), *InArguments.UnrealProjectID, *InArguments.UnrealEngineVersion, APIVersion, Result, GetNGXResultAsString(Result));
 		}
 
 		if (NVSDK_NGX_FAILED(Result))
 		{
-			NVSDK_NGX_VULKAN_Shutdown();
+			NVSDK_NGX_VULKAN_Shutdown1(InDevice);
 		}
 
 		--APIVersion;
@@ -149,7 +149,7 @@ FNGXVulkanRHI::~FNGXVulkanRHI()
 	UE_LOG(LogDLSSNGXVulkanRHI, Log, TEXT("%s Enter"), ANSI_TO_TCHAR(__FUNCTION__));
 	if (bNGXInitialized)
 	{
-		// Destroy the parameters and features before we call NVSDK_NGX_D3D11_Shutdown
+		// Destroy the parameters and features before we call NVSDK_NGX_VULKAN_Shutdown1
 		ReleaseAllocatedFeatures();
 		
 		NVSDK_NGX_Result Result;
@@ -158,8 +158,9 @@ FNGXVulkanRHI::~FNGXVulkanRHI()
 			Result = NVSDK_NGX_VULKAN_DestroyParameters(DLSSQueryFeature.CapabilityParameters);
 			UE_LOG(LogDLSSNGXVulkanRHI, Log, TEXT("NVSDK_NGX_VULKAN_DestroyParameters -> (%u %s)"), Result, GetNGXResultAsString(Result));
 		}
-		Result = NVSDK_NGX_VULKAN_Shutdown();
-		UE_LOG(LogDLSSNGXVulkanRHI, Log, TEXT("NVSDK_NGX_VULKAN_Shutdown -> (%u %s)"), Result, GetNGXResultAsString(Result));
+		VkDevice VulkanLogicalDevice = VulkanRHI->RHIGetVkDevice();
+		Result = NVSDK_NGX_VULKAN_Shutdown1(VulkanLogicalDevice);
+		UE_LOG(LogDLSSNGXVulkanRHI, Log, TEXT("NVSDK_NGX_VULKAN_Shutdown1 -> (%u %s)"), Result, GetNGXResultAsString(Result));
 		bNGXInitialized = false;
 	}
 	UE_LOG(LogDLSSNGXVulkanRHI, Log, TEXT("%s Leave"), ANSI_TO_TCHAR(__FUNCTION__));

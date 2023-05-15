@@ -97,7 +97,7 @@ NVSDK_NGX_Result FNGXD3D11RHI::Init_NGX_D3D11(const FNGXRHICreateArguments& InAr
 
 		if (NVSDK_NGX_FAILED(Result))
 		{
-			NVSDK_NGX_D3D11_Shutdown();
+			NVSDK_NGX_D3D11_Shutdown1(InHandle);
 		}
 		
 		--APIVersion;
@@ -160,7 +160,7 @@ FNGXD3D11RHI::~FNGXD3D11RHI()
 	UE_LOG(LogDLSSNGXD3D11RHI, Log, TEXT("%s Enter"), ANSI_TO_TCHAR(__FUNCTION__));
 	if(bNGXInitialized)
 	{
-		// Destroy the parameters and features before we call NVSDK_NGX_D3D11_Shutdown
+		// Destroy the parameters and features before we call NVSDK_NGX_D3D11_Shutdown1
 		ReleaseAllocatedFeatures();
 
 		NVSDK_NGX_Result Result;
@@ -169,8 +169,8 @@ FNGXD3D11RHI::~FNGXD3D11RHI()
 			Result = NVSDK_NGX_D3D11_DestroyParameters(DLSSQueryFeature.CapabilityParameters);
 			UE_LOG(LogDLSSNGXD3D11RHI, Log, TEXT("NVSDK_NGX_D3D11_DestroyParameters -> (%u %s)"), Result, GetNGXResultAsString(Result));
 		}
-		Result = NVSDK_NGX_D3D11_Shutdown();
-		UE_LOG(LogDLSSNGXD3D11RHI, Log, TEXT("NVSDK_NGX_D3D11_Shutdown -> (%u %s)"), Result, GetNGXResultAsString(Result));
+		Result = NVSDK_NGX_D3D11_Shutdown1(Direct3DDevice);
+		UE_LOG(LogDLSSNGXD3D11RHI, Log, TEXT("NVSDK_NGX_D3D11_Shutdown1 -> (%u %s)"), Result, GetNGXResultAsString(Result));
 		bNGXInitialized = false;
 	}
 	UE_LOG(LogDLSSNGXD3D11RHI, Log, TEXT("%s Leave"), ANSI_TO_TCHAR(__FUNCTION__));

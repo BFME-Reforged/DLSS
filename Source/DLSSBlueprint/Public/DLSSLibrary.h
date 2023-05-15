@@ -107,11 +107,11 @@ public:
 	UFUNCTION(BlueprintPure, Category = "DLSS", meta = (DisplayName = "Get DLSS Screenpercentage Range"))
 	static DLSSBLUEPRINT_API void GetDLSSScreenPercentageRange(float& MinScreenPercentage, float& MaxScreenPercentage);
 
-	/** Sets the console variables to enable/disable DLSS (r.NGX.DLSS.Enable, r.NGX.DLSS.Quality)*/
+	/** Enables/disables DLSS */
 	UFUNCTION(BlueprintCallable, Category = "DLSS", meta=(WorldContext="WorldContextObject", DisplayName = "Set DLSS Mode", DeprecatedFunction, DeprecationMessage = "Use EnableDLSS instead"))
 	static DLSSBLUEPRINT_API void SetDLSSMode(UObject* WorldContextObject, UDLSSMode DLSSMode);
 
-	/* Reads the console variables to infer the current DLSS mode (r.NGX.DLSS.Enable, r.NGX.DLSS.Quality, r.TemporalAA.Upscaler)*/
+	/* Reads the current DLSS mode */
 	UFUNCTION(BlueprintPure, Category = "DLSS", meta = (DisplayName = "Get DLSS Mode", DeprecatedFunction, DeprecationMessage = "Use IsDLSSEnabled instead"))
 	static DLSSBLUEPRINT_API UDLSSMode GetDLSSMode();
 
@@ -127,9 +127,6 @@ public:
 	UFUNCTION(BlueprintPure, Category = "DLSS", meta = (DisplayName = "Get Default DLSS Mode"))
 	static DLSSBLUEPRINT_API UDLSSMode GetDefaultDLSSMode();
 
-	/* Allows conversion from BlueprintType enums. */
-	static DLSSBLUEPRINT_API int32 ToDLSSQualityCVarValue(UDLSSMode InDLSSQualityMode);
-
 private:
 	static UDLSSSupport DLSSSupport;
 
@@ -138,6 +135,9 @@ private:
 	static int32 MinDLSSDriverVersionMajor;
 	static FDLSSUpscaler* DLSSUpscaler;
 	static bool bDLSSLibraryInitialized;
+
+	static UDLSSMode CurrentDLSSModeDeprecated;
+	static bool bDLAAEnabledDeprecated;
 
 	static bool TryInitDLSSLibrary();
 

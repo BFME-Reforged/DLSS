@@ -25,6 +25,18 @@ enum class EDLSSSettingOverride : uint8
 	UseProjectSettings UMETA(DisplayName = "Use project settings"),
 };
 
+UENUM()
+enum class EDLSSPreset : uint8
+{
+	Default=0 UMETA(ToolTip = "default behavior, preset specified per DLSS SDK release"),
+	A=1 UMETA(ToolTip = "force preset A"),
+	B=2 UMETA(ToolTip = "force preset B"),
+	C=3 UMETA(ToolTip = "force preset C"),
+	D=4 UMETA(ToolTip = "force preset D"),
+	E=5 UMETA(ToolTip = "force preset E"),
+	F=6 UMETA(ToolTip = "force preset F"),
+};
+
 UCLASS(Config = Engine, ProjectUserConfig)
 class DLSS_API UDLSSOverrideSettings : public UObject
 {
@@ -99,5 +111,29 @@ public:
 		FString CustomDLSSBinaryPath;
 	UPROPERTY(VisibleAnywhere, Config, Category = "General Settings", DisplayName = "Exists", AdvancedDisplay)
 		bool bCustomDLSSBinaryExists;
+
+	/** Allow OTA updates of DLSS models */
+	UPROPERTY(Config, EditAnywhere, Category = "General Settings", DisplayName = "Allow OTA update")
+		bool bAllowOTAUpdate = true;
+
+	/** DLAA preset setting. Allows selecting a different DL model than the default */
+	UPROPERTY(Config, EditAnywhere, Category = "General Settings", DisplayName = "DLAA Preset", AdvancedDisplay)
+		EDLSSPreset DLAAPreset = EDLSSPreset::Default;
+
+	/** DLSS quality mode preset setting. Allows selecting a different DL model than the default */
+	UPROPERTY(Config, EditAnywhere, Category = "General Settings", DisplayName = "DLSS Quality Preset", AdvancedDisplay)
+		EDLSSPreset DLSSQualityPreset = EDLSSPreset::Default;
+
+	/** DLSS balanced mode preset setting. Allows selecting a different DL model than the default */
+	UPROPERTY(Config, EditAnywhere, Category = "General Settings", DisplayName = "DLSS Balanced Preset", AdvancedDisplay)
+		EDLSSPreset DLSSBalancedPreset = EDLSSPreset::Default;
+
+	/** DLSS performance mode preset setting. Allows selecting a different DL model than the default */
+	UPROPERTY(Config, EditAnywhere, Category = "General Settings", DisplayName = "DLSS Performance Preset", AdvancedDisplay)
+		EDLSSPreset DLSSPerformancePreset = EDLSSPreset::Default;
+
+	/** DLSS ultra performance mode preset setting. Allows selecting a different DL model than the default */
+	UPROPERTY(Config, EditAnywhere, Category = "General Settings", DisplayName = "DLSS Ultra Performance Preset", AdvancedDisplay)
+		EDLSSPreset DLSSUltraPerformancePreset = EDLSSPreset::Default;
 };
 

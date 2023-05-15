@@ -219,6 +219,16 @@ void FDLSSModule::StartupModule()
 				UE_LOG(LogDLSS, Warning, TEXT("NGX Application ID not specified, using the Project ID by default."));
 			}
 
+			bool bAllowOTAUpdate = GetDefault<UDLSSSettings>()->bAllowOTAUpdate;
+			if (FParse::Param(FCommandLine::Get(), TEXT("ngxenableota")))
+			{
+				bAllowOTAUpdate = true;
+			}
+			else if (FParse::Param(FCommandLine::Get(), TEXT("ngxdisableota")))
+			{
+				bAllowOTAUpdate = false;
+			}
+
 			FNGXRHICreateArguments Arguments;
 			Arguments.PluginBaseDir = PluginBaseDir;
 			Arguments.DynamicRHI = GDynamicRHI;
@@ -228,6 +238,7 @@ void FDLSSModule::StartupModule()
 			Arguments.NGXAppId = NGXAppID;
 			Arguments.UnrealEngineVersion = FString::Printf(TEXT("%u.%u"), FEngineVersion::Current().GetMajor(), FEngineVersion::Current().GetMinor());
 			Arguments.UnrealProjectID = GetDefault<UGeneralProjectSettings>()->ProjectID.ToString();
+			Arguments.bAllowOTAUpdate = bAllowOTAUpdate;
 
 			INGXRHIModule* NGXRHIModule = &FModuleManager::LoadModuleChecked<INGXRHIModule>(NGXRHIModuleName);
 			NGXRHIExtensions = NGXRHIModule->CreateNGXRHI(Arguments);

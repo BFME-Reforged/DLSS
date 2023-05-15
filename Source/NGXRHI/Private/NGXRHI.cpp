@@ -47,7 +47,6 @@ static TAutoConsoleVariable<int32> CVarNGXEnableOtherLoggingSinks(
 	TEXT("1: on \n"),
 	ECVF_ReadOnly);
 
-
 static TAutoConsoleVariable<int32> CVarNGXFramesUntilFeatureDestruction(
 	TEXT("r.NGX.FramesUntilFeatureDestruction"), 3,
 	TEXT("Number of frames until an unused NGX feature gets destroyed. (default=3)"),
@@ -120,7 +119,7 @@ NGXRHI::NGXRHI(const FNGXRHICreateArguments& Arguments)
 	FString PluginNGXDevelopmentBinariesDir = FPaths::Combine(Arguments.PluginBaseDir, TEXT("Binaries/ThirdParty/Win64/Development/"));
 	FString PluginNGXBinariesDir = PluginNGXProductionBinariesDir;
 
-	// Thee paths can be different depending on the project type (source, no source) and how the project is packaged, thus we have both
+	// These paths can be different depending on the project type (source, no source) and how the project is packaged, thus we have both
 	FString ProjectNGXBinariesDir = FPaths::Combine(FPaths::ProjectDir(), TEXT("Binaries/ThirdParty/NVIDIA/NGX/Win64/"));
 	FString LaunchNGXBinariesDir  = FPaths::Combine(FPaths::LaunchDir(), TEXT("Binaries/ThirdParty/NVIDIA/NGX/Win64/"));
 
@@ -165,7 +164,7 @@ NGXRHI::NGXRHI(const FNGXRHICreateArguments& Arguments)
 		const bool bHasDLSSBinary = IPlatformFile::GetPlatformPhysical().FileExists(*FPaths::Combine(NGXDLLSearchPaths[i], NGX_DLSS_BINARY_NAME));
 		UE_LOG(LogDLSSNGXRHI, Log, TEXT("NVIDIA NGX DLSS binary %s %s in search path %s"), NGX_DLSS_BINARY_NAME, bHasDLSSBinary ? TEXT("found") : TEXT("not found"), *NGXDLLSearchPaths[i]);
 	}
-	
+
 	// we do this separately here so we can show relative paths in the UI later
 	DLSSGenericBinaryInfo.Get<0>() = FPaths::Combine(PluginNGXBinariesDir, NGX_DLSS_BINARY_NAME);
 	DLSSGenericBinaryInfo.Get<1>() = IPlatformFile::GetPlatformPhysical().FileExists(*DLSSGenericBinaryInfo.Get<0>());
@@ -195,6 +194,34 @@ NGXRHI::NGXRHI(const FNGXRHICreateArguments& Arguments)
 				FeatureInfo.LoggingInfo.MinimumLoggingLevel = NVSDK_NGX_LOGGING_LEVEL_VERBOSE;
 				break;
 		}
+	}
+
+	// optional OTA update of DLSS model
+	if (Arguments.bAllowOTAUpdate)
+	{
+		UE_LOG(LogDLSSNGXRHI, Log, TEXT("DLSS model OTA update enabled"));
+		if (Arguments.InitializeNGXWithNGXApplicationID())
+		{
+			NVSDK_NGX_Application_Identifier NGXAppIdentifier;
+			NGXAppIdentifier.IdentifierType = NVSDK_NGX_Application_Identifier_Type::NVSDK_NGX_Application_Identifier_Type_Application_Id;
+			NGXAppIdentifier.v.ApplicationId = Arguments.NGXAppId;
+			NVSDK_NGX_UpdateFeature(&NGXAppIdentifier, NVSDK_NGX_Feature::NVSDK_NGX_Feature_SuperSampling);
+		}
+		else
+		{
+			FTCHARToUTF8 ProjectIdUTF8(*Arguments.UnrealProjectID);
+			FTCHARToUTF8 EngineVersionUTF8(*Arguments.UnrealEngineVersion);
+			NVSDK_NGX_Application_Identifier NGXAppIdentifier;
+			NGXAppIdentifier.IdentifierType = NVSDK_NGX_Application_Identifier_Type::NVSDK_NGX_Application_Identifier_Type_Project_Id;
+			NGXAppIdentifier.v.ProjectDesc.ProjectId = ProjectIdUTF8.Get();
+			NGXAppIdentifier.v.ProjectDesc.EngineType = NVSDK_NGX_EngineType::NVSDK_NGX_ENGINE_TYPE_UNREAL;
+			NGXAppIdentifier.v.ProjectDesc.EngineVersion = EngineVersionUTF8.Get();
+			NVSDK_NGX_UpdateFeature(&NGXAppIdentifier, NVSDK_NGX_Feature::NVSDK_NGX_Feature_SuperSampling);
+		}
+	}
+	else
+	{
+		UE_LOG(LogDLSSNGXRHI, Log, TEXT("DLSS model OTA update disabled"));
 	}
 }
 
@@ -370,12 +397,46 @@ NVSDK_NGX_DLSS_Create_Params FRHIDLSSArguments::GetNGXDLSSCreateParams() const
 }
 
 
+static bool CrossedDLAAPseudoModeThreshold(float NewUpscaleRatio, float PreviousUpscaleRatio)
+{
+	// This DLAA threshold is an undocumented value from the NGX DLSS SDK implementation
+	// If the upscale ratio is greater than or equal to this threshold, the model weights for DLAA will be selected in
+	// place of the weights for the requested DLSS quality mode. Weights will only change at feature creation time, so
+	// we have to detect if we've crossed this threshold. Otherwise changing the screen percentage at runtime from
+	// DLAA range (99-100) to non-DLAA range (<99) or vice-versa could give the wrong weights.
+	const float DLAA_PSEUDO_MODE_THRESHOLD = 0.99f;
+	const float HYSTERESIS = 0.001f;
+	if (NewUpscaleRatio > PreviousUpscaleRatio && NewUpscaleRatio >= (DLAA_PSEUDO_MODE_THRESHOLD + HYSTERESIS))
+	{
+		// DLAA pseudo-mode on
+		return true;
+	}
+	else if (NewUpscaleRatio < PreviousUpscaleRatio && NewUpscaleRatio <= (DLAA_PSEUDO_MODE_THRESHOLD - HYSTERESIS))
+	{
+		// DLAA pseudo-mode off
+		return true;
+	}
+	return false;
+}
 
 // this is used by the RHIs to see whether they need to recreate the NGX feature
 bool FDLSSState::RequiresFeatureRecreation(const FRHIDLSSArguments& InArguments)
 {
 	check(!IsRunningRHIInSeparateThread() || IsInRHIThread());
-	return !DLSSFeature || DLSSFeature->Desc != InArguments.GetFeatureDesc();
+	float NewUpscaleRatio = static_cast<float>(InArguments.SrcRect.Width()) / static_cast<float>(InArguments.DestRect.Width());
+	if (!DLSSFeature || DLSSFeature->Desc != InArguments.GetFeatureDesc())
+	{
+		PreviousUpscaleRatio = NewUpscaleRatio;
+		return true;
+	}
+
+	if (CrossedDLAAPseudoModeThreshold(NewUpscaleRatio, PreviousUpscaleRatio))
+	{
+		PreviousUpscaleRatio = NewUpscaleRatio;
+		return true;
+	}
+
+	return false;
 }
 
 void NGXRHI::RegisterFeature(TSharedPtr<NGXDLSSFeature> InFeature)
@@ -426,6 +487,13 @@ void NGXRHI::ReleaseAllocatedFeatures()
 void NGXRHI::ApplyCommonNGXParameterSettings(NVSDK_NGX_Parameter* InOutParameter, const FRHIDLSSArguments& InArguments)
 {
 	NVSDK_NGX_Parameter_SetI(InOutParameter, NVSDK_NGX_Parameter_FreeMemOnReleaseFeature, InArguments.bReleaseMemoryOnDelete ? 1 : 0);
+
+	// model selection
+	NVSDK_NGX_Parameter_SetUI(InOutParameter, NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_DLAA, static_cast<uint32>(InArguments.DLAAPreset));
+	NVSDK_NGX_Parameter_SetUI(InOutParameter, NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_Quality, static_cast<uint32>(InArguments.DLSSPreset));
+	NVSDK_NGX_Parameter_SetUI(InOutParameter, NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_Balanced, static_cast<uint32>(InArguments.DLSSPreset));
+	NVSDK_NGX_Parameter_SetUI(InOutParameter, NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_Performance, static_cast<uint32>(InArguments.DLSSPreset));
+	NVSDK_NGX_Parameter_SetUI(InOutParameter, NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_UltraPerformance, static_cast<uint32>(InArguments.DLSSPreset));
 }
 
 void NGXRHI::TickPoolElements()

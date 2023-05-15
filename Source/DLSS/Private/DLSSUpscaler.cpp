@@ -37,32 +37,26 @@ static TAutoConsoleVariable<int32> CVarNGXDLSSEnable(
 	TEXT("Enable/Disable DLSS entirely."),
 	ECVF_RenderThreadSafe);
 
-static TAutoConsoleVariable<bool> CVarNGXDLAAEnable(
-	TEXT("r.NGX.DLAA.Enable"), false,
-	TEXT("Enable/Disable DLAA"),
-	ECVF_RenderThreadSafe);
-
 static TAutoConsoleVariable<int32> CVarNGXDLSSAutomationTesting(
 	TEXT("r.NGX.DLSS.AutomationTesting"), 0,
 	TEXT("Whether the NGX library should be loaded when GIsAutomationTesting is true.(default is false)\n")
 	TEXT("Must be set to true before startup. This can be enabled for cases where running automation testing with DLSS desired"),
 	ECVF_ReadOnly);
 
-static TAutoConsoleVariable<int32> CVarNGXDLSSPerfQualitySetting(
-	TEXT("r.NGX.DLSS.Quality"),
-	-1,
-	TEXT("DLSS Performance/Quality setting. Not all modes might be supported at runtime, in this case Balanced mode is used as a fallback\n")
-	TEXT(" -2: Ultra Performance\n")
-	TEXT(" -1: Performance (default)\n")
-	TEXT("  0: Balanced\n")
-	TEXT("  1: Quality\n")
-	TEXT("  2: Ultra Quality\n"),
+// corresponds to EDLSSPreset
+static TAutoConsoleVariable<int32> CVarNGXDLSSPresetSetting(
+	TEXT("r.NGX.DLSS.Preset"),
+	0,
+	TEXT("DLSS/DLAA preset setting. Allows selecting a different DL model than the default\n")
+	TEXT("  0: Use default preset or ini value\n")
+	TEXT("  1: Force preset A\n")
+	TEXT("  2: Force preset B\n")
+	TEXT("  3: Force preset C\n")
+	TEXT("  4: Force preset D\n")
+	TEXT("  5: Force preset E\n")
+	TEXT("  6: Force preset F"),
 	ECVF_RenderThreadSafe);
 
-static TAutoConsoleVariable<bool> CVarNGXDLSSAutoQualitySetting(
-	TEXT("r.NGX.DLSS.Quality.Auto"), 0,
-	TEXT("Enable/Disable DLSS automatically selecting the DLSS quality mode based on the render resolution"),
-	ECVF_RenderThreadSafe);
 
 static TAutoConsoleVariable<float> CVarNGXDLSSSharpness(
 	TEXT("r.NGX.DLSS.Sharpness"),
@@ -153,6 +147,95 @@ bool FDLSSPassParameters::Validate() const
 {
 	checkf(OutputViewRect.Min == FIntPoint::ZeroValue,TEXT("The DLSS OutputViewRect %dx%d must be non-zero"), OutputViewRect.Min.X, OutputViewRect.Min.Y);
 	return true;
+}
+
+static EDLSSPreset GetDLSSPresetFromCVarValue(int32 InCVarValue)
+{
+	if (InCVarValue >= 0 && InCVarValue <= static_cast<int32>(EDLSSPreset::F))
+	{
+		return static_cast<EDLSSPreset>(InCVarValue);
+	}
+	UE_LOG(LogDLSS, Warning, TEXT("Invalid r.NGX.DLSS.DLSSPreset value %d"), InCVarValue);
+	return EDLSSPreset::Default;
+}
+
+static NVSDK_NGX_DLSS_Hint_Render_Preset ToNGXDLSSPreset(EDLSSPreset DLSSPreset)
+{
+	switch (DLSSPreset)
+	{
+		default:
+			checkf(false, TEXT("ToNGXDLSSPreset should not be called with an out of range EDLSSPreset from the higher level code"));
+		case EDLSSPreset::Default:
+			return NVSDK_NGX_DLSS_Hint_Render_Preset_Default;
+
+		case EDLSSPreset::A:
+			return NVSDK_NGX_DLSS_Hint_Render_Preset_A;
+
+		case EDLSSPreset::B:
+			return NVSDK_NGX_DLSS_Hint_Render_Preset_B;
+
+		case EDLSSPreset::C:
+			return NVSDK_NGX_DLSS_Hint_Render_Preset_C;
+
+		case EDLSSPreset::D:
+			return NVSDK_NGX_DLSS_Hint_Render_Preset_D;
+
+		case EDLSSPreset::E:
+			return NVSDK_NGX_DLSS_Hint_Render_Preset_E;
+
+		case EDLSSPreset::F:
+			return NVSDK_NGX_DLSS_Hint_Render_Preset_F;
+	}
+}
+
+static NVSDK_NGX_DLSS_Hint_Render_Preset GetNGXDLSSPresetFromQualityMode(EDLSSQualityMode QualityMode)
+{
+
+	EDLSSPreset DLSSPreset = EDLSSPreset::Default;
+	switch (QualityMode)
+	{
+		case EDLSSQualityMode::UltraPerformance:
+			DLSSPreset = GetDefault<UDLSSSettings>()->DLSSUltraPerformancePreset;
+			break;
+
+		case EDLSSQualityMode::Performance:
+			DLSSPreset = GetDefault<UDLSSSettings>()->DLSSPerformancePreset;
+			break;
+
+		case EDLSSQualityMode::Balanced:
+			DLSSPreset = GetDefault<UDLSSSettings>()->DLSSBalancedPreset;
+			break;
+
+		case EDLSSQualityMode::Quality:
+			DLSSPreset = GetDefault<UDLSSSettings>()->DLSSQualityPreset;
+			break;
+
+		case EDLSSQualityMode::UltraQuality:
+			// Note: NGX doesn't currently allow specifying a render preset for ultra quality mode so neither do we
+			DLSSPreset = EDLSSPreset::Default;
+			break;
+
+		default:
+			checkf(false, TEXT("GetNGXDLSSPresetFromQualityMode called with an out of range EDLSSQualityMode"));
+			break;
+	}
+	int32 DLSSPresetCVarVal = CVarNGXDLSSPresetSetting.GetValueOnAnyThread();
+	if (DLSSPresetCVarVal != 0)
+	{
+		DLSSPreset = GetDLSSPresetFromCVarValue(DLSSPresetCVarVal);
+	}
+	return ToNGXDLSSPreset(DLSSPreset);
+}
+
+static NVSDK_NGX_DLSS_Hint_Render_Preset GetNGXDLAAPreset()
+{
+	EDLSSPreset DLAAPreset = GetDefault<UDLSSSettings>()->DLAAPreset;
+	int32 DLSSPresetCVarVal = CVarNGXDLSSPresetSetting.GetValueOnAnyThread();
+	if (DLSSPresetCVarVal != 0)
+	{
+		DLAAPreset = GetDLSSPresetFromCVarValue(DLSSPresetCVarVal);
+	}
+	return ToNGXDLSSPreset(DLAAPreset);
 }
 
 static NVSDK_NGX_PerfQuality_Value ToNGXQuality(EDLSSQualityMode Quality)
@@ -293,11 +376,6 @@ void FDLSSUpscalerViewExtension::BeginRenderViewFamily(FSceneViewFamily& ViewFam
 		UE_LOG(LogDLSS, Error, TEXT("Another plugin already set FSceneViewFamily::SetTemporalUpscalerInterface()"));
 		return;
 	}
-}
-
-bool FDLSSUpscaler::IsDLAAMode()
-{
-	return CVarNGXDLAAEnable.GetValueOnAnyThread();
 }
 
 FDLSSUpscaler::FDLSSUpscaler(NGXRHI* InNGXRHIExtensions): PreviousResolutionFraction(-1.0f)
@@ -522,6 +600,8 @@ FDLSSOutputs FDLSSSceneViewFamilyUpscaler::AddDLSSPass(
 		}
 #endif
 		NGXRHI* LocalNGXRHIExtensions = Upscaler->NGXRHIExtensions;
+		const int32 NGXDLAAPreset = GetNGXDLAAPreset();
+		const int32 NGXDLSSPreset = GetNGXDLSSPresetFromQualityMode(DLSSQualityMode);
 		const int32 NGXPerfQuality = ToNGXQuality(DLSSQualityMode);
 		GraphBuilder.AddPass(
 			RDG_EVENT_NAME("DLSS %s%s %dx%d -> %dx%d",
@@ -532,7 +612,7 @@ FDLSSOutputs FDLSSSceneViewFamilyUpscaler::AddDLSSPass(
 			PassParameters,
 			ERDGPassFlags::Compute | ERDGPassFlags::Raster | ERDGPassFlags::SkipRenderPass,
 			// FRHICommandListImmediate forces it to run on render thread, FRHICommandList doesn't
-			[LocalNGXRHIExtensions, PassParameters, Inputs, bCameraCut, JitterOffset, DeltaWorldTime, PreExposure, Sharpness, NGXPerfQuality, DLSSState, bUseAutoExposure, bReleaseMemoryOnDelete](FRHICommandListImmediate& RHICmdList)
+			[LocalNGXRHIExtensions, PassParameters, Inputs, bCameraCut, JitterOffset, DeltaWorldTime, PreExposure, Sharpness, NGXDLAAPreset, NGXDLSSPreset, NGXPerfQuality, DLSSState, bUseAutoExposure, bReleaseMemoryOnDelete](FRHICommandListImmediate& RHICmdList)
 		{
 			FRHIDLSSArguments DLSSArguments;
 			FMemory::Memzero(&DLSSArguments, sizeof(DLSSArguments));
@@ -551,6 +631,8 @@ FDLSSOutputs FDLSSSceneViewFamilyUpscaler::AddDLSSPass(
 			DLSSArguments.DeltaTime = DeltaWorldTime;
 			DLSSArguments.bReleaseMemoryOnDelete = bReleaseMemoryOnDelete;
 
+			DLSSArguments.DLAAPreset = NGXDLAAPreset;
+			DLSSArguments.DLSSPreset = NGXDLSSPreset;
 			DLSSArguments.PerfQuality = NGXPerfQuality;
 
 			check(PassParameters->SceneColorInput);
@@ -639,7 +721,7 @@ bool FDLSSUpscaler::IsDLSSActive() const
 	const bool bDLSSActive =
 		DLSSModule->QueryDLSSSupport() == EDLSSSupport::Supported &&
 		CVarTemporalAAUpscaler && (CVarTemporalAAUpscaler->GetInt() != 0) &&
-		((CVarNGXDLSSEnable.GetValueOnAnyThread() != 0) || CVarNGXDLAAEnable.GetValueOnAnyThread());
+		(CVarNGXDLSSEnable.GetValueOnAnyThread() != 0);
 	return bDLSSActive;
 }
 

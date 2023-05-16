@@ -62,8 +62,6 @@ public class NGX : ModuleRules
             };
 
 			PublicDefinitions.Add("NGX_DLSS_BINARY_NAME=TEXT(\"" + NGXSnippetDLLs[0] + "\")");
-			// work around missing definition in NGX headers
-			PublicDefinitions.Add("NV_WINDOWS=1");
 
 			foreach (string NGXSnippetDLL in NGXSnippetDLLs)
 			{

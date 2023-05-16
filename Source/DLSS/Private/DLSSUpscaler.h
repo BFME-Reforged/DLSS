@@ -147,8 +147,6 @@ public:
 
 	bool IsDLSSActive() const;
 
-	static bool IsDLAAMode();
-
 	// Give the suggested EDLSSQualityMode if one is appropriate for the given pixel count, or nothing if DLSS should be disabled
 	TOptional<EDLSSQualityMode> GetAutoQualityModeFromPixels(int PixelCount) const;
 

@@ -44,6 +44,8 @@ void FNGXVulkanRHIPreInitModule::StartupModule()
 				unsigned int NumDeviceExtensions = 0;
 				const char** DeviceExtensions = nullptr;
 
+				// TODO: NVSDK_NGX_VULKAN_RequiredExtensions deprecated, change to use NVSDK_NGX_VULKAN_GetFeatureInstanceExtensionRequirements instead
+				// We'll need information that's currently stored in UDLSSSettings from the DLSS module which isn't loaded yet
 				const NVSDK_NGX_Result ResultRequiredExtensions = NVSDK_NGX_VULKAN_RequiredExtensions(&NumInstanceExtensions, &InstanceExtensions, &NumDeviceExtensions, &DeviceExtensions);
 				UE_LOG(LogDLSSNGXVulkanRHIPreInit, Log, TEXT("NVSDK_NGX_VULKAN_RequiredExtensions -> (%u %s)"), ResultRequiredExtensions, GetNGXResultAsString(ResultRequiredExtensions));
 

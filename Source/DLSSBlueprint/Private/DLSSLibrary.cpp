@@ -50,6 +50,8 @@ int32 UDLSSLibrary::MinDLSSDriverVersionMinor = 0;
 
 FDLSSUpscaler* UDLSSLibrary::DLSSUpscaler = nullptr;
 bool UDLSSLibrary::bDLSSLibraryInitialized = false;
+UDLSSMode UDLSSLibrary::CurrentDLSSModeDeprecated = UDLSSMode::Quality;
+bool UDLSSLibrary::bDLAAEnabledDeprecated = false;
 
 static bool ShowDLSSSDebugOnScreenMessages()
 {
@@ -142,11 +144,6 @@ static EDLSSQualityMode ToEDLSSQualityMode(UDLSSMode InDLSSQualityMode)
 	}
 }
 
-int32 UDLSSLibrary::ToDLSSQualityCVarValue(UDLSSMode DLSSMode)
-{
-	return static_cast<int32>(ToEDLSSQualityMode(DLSSMode));
-}
-
 #endif
 
 bool UDLSSLibrary::IsDLSSModeSupported(UDLSSMode DLSSMode)
@@ -172,7 +169,7 @@ bool UDLSSLibrary::IsDLSSModeSupported(UDLSSMode DLSSMode)
 		}
 		else if (DLSSMode == UDLSSMode::Auto)
 		{
-			// support for auto quality mode was dropped with UE 5.1
+			// support for auto quality mode was dropped with UE 5.1 (except as a way to ask for optimal screen percentage for a given resolution)
 			return false;
 		}
 		else
@@ -405,17 +402,15 @@ void UDLSSLibrary::EnableDLAA(bool bEnabled)
 
 	const bool bDLAASupported = (DLSSSupport == UDLSSSupport::Supported);
 
-	static auto CVarDLAAEnable = IConsoleManager::Get().FindConsoleVariable(TEXT("r.NGX.DLAA.Enable"));
-	if (CVarDLAAEnable)
+	bDLAAEnabledDeprecated = bDLAASupported && bEnabled;
+	if (bDLAAEnabledDeprecated)
 	{
-		bool bDLAAEnabled = bDLAASupported && bEnabled;
-		CVarDLAAEnable->Set(bDLAAEnabled, ECVF_SetByCommandline);
-		if (bDLAAEnabled)
-		{
-			// DLAA needs to override the temporal upscaler
-			static const auto CVarUseTemporalAAUpscaler = IConsoleManager::Get().FindConsoleVariable(TEXT("r.TemporalAA.Upscaler"));
-			CVarUseTemporalAAUpscaler->SetWithCurrentPriority(1);
-		}
+		EnableDLSS(true);
+	}
+	else
+	{
+		// fall back to last set DLSS mode
+		SetDLSSMode(nullptr, CurrentDLSSModeDeprecated);
 	}
 #endif
 }
@@ -432,9 +427,7 @@ bool UDLSSLibrary::IsDLAAEnabled()
 
 	const bool bDLAASupported = (DLSSSupport == UDLSSSupport::Supported);
 
-	const bool bDLAAEnabled = (DLSSUpscaler != nullptr) && DLSSUpscaler->IsDLAAMode();
-
-	return bDLAASupported && bDLAAEnabled;
+	return bDLAASupported && bDLAAEnabledDeprecated;
 #else
 	return false;
 #endif
@@ -455,6 +448,7 @@ void UDLSSLibrary::SetDLSSMode(UObject* WorldContextObject, UDLSSMode DLSSMode)
 	// UEnums are strongly typed, but then one can also cast a byte to an UEnum ...
 	if(Enum->IsValidEnumValue(int64(DLSSMode)) && (Enum->GetMaxEnumValue() != int64(DLSSMode)))
 	{
+		CurrentDLSSModeDeprecated = DLSSMode;
 		const bool bDLSSSupported = (DLSSSupport == UDLSSSupport::Supported);
 
 		TOptional<EDLSSQualityMode> MaybeQualityMode{};
@@ -486,20 +480,20 @@ void UDLSSLibrary::SetDLSSMode(UObject* WorldContextObject, UDLSSMode DLSSMode)
 				EConsoleVariableFlags Priority = static_cast<EConsoleVariableFlags>(CVarScreenPercentage->GetFlags() & ECVF_SetByMask);
 				CVarScreenPercentage->Set(100.0f, Priority);
 			}
-			EnableDLSS(false);
+			// don't override DLAA if DLAA is still enabled
+			if (!bDLAAEnabledDeprecated)
+			{
+				EnableDLSS(false);
+			}
 		}
 
-		// TODO: this cvar does nothing
-		static auto CVarDLSSQuality = IConsoleManager::Get().FindConsoleVariable(TEXT("r.NGX.DLSS.Quality"));
-
-		if (CVarDLSSQuality && (DLSSMode != UDLSSMode::Off) && (DLSSMode != UDLSSMode::Auto))
+		if (DLSSMode != UDLSSMode::Off)
 		{
 #if !UE_BUILD_SHIPPING
 			check(IsInGameThread());
 			DLSSErrorState.bIsDLSSModeUnsupported = !IsDLSSModeSupported(DLSSMode);
 			DLSSErrorState.InvalidDLSSMode = DLSSMode;
 #endif 
-			CVarDLSSQuality->Set(ToDLSSQualityCVarValue(DLSSMode), ECVF_SetByCommandline);
 		}
 	}
 	else
@@ -532,46 +526,14 @@ UDLSSMode UDLSSLibrary::GetDLSSMode()
 	static const auto CVarDLSSEnable = IConsoleManager::Get().FindConsoleVariable(TEXT("r.NGX.DLSS.Enable"));
 	const bool bDLSSEnabled = CVarDLSSEnable && CVarDLSSEnable->GetInt();
 
-	static const auto CVarDLSSQuality = IConsoleManager::Get().FindConsoleVariable(TEXT("r.NGX.DLSS.Quality"));
-	const int32 DLSSQuality = CVarDLSSQuality ? CVarDLSSQuality->GetInt() : 0;
-
-	static const auto CVarDLSSAutoQualityMode = IConsoleManager::Get().FindConsoleVariable(TEXT("r.NGX.DLSS.Quality.Auto"));
-	const bool bIsAutoQualityMode = CVarDLSSAutoQualityMode ? CVarDLSSAutoQualityMode->GetBool() : false;
-	const bool bDLAAEnabled = (DLSSUpscaler != nullptr) && DLSSUpscaler->IsDLAAMode();
-
-	if (bDLAAEnabled)
+	if (bDLAAEnabledDeprecated)
 	{
 		// DLSS is mutually exclusive with DLAA, DLAA wins
 		return UDLSSMode::Off;
 	}
-	else if (bTemporalUpscalerActive && bDLSSSupported && bDLSSEnabled && bIsAutoQualityMode)
+	else if (bTemporalUpscalerActive && bDLSSSupported && bDLSSEnabled)
 	{
-		return UDLSSMode::Auto;
-	}
-	else if (bTemporalUpscalerActive && bDLSSSupported && bDLSSEnabled && CVarDLSSQuality)
-	{
-		static_assert(int32(EDLSSQualityMode::NumValues) == 5, "dear DLSS plugin NVIDIA developer, please update this code to handle the new enum values");
-
-		switch (EDLSSQualityMode(DLSSQuality))
-		{
-			case EDLSSQualityMode::UltraPerformance:
-				return UDLSSMode::UltraPerformance;
-
-			default:
-				UE_LOG(LogDLSSBlueprint , Error, TEXT("r.NGX.DLSS.Quality is set to %d, which is outside of the valid range [%d, %d])"), DLSSQuality, EDLSSQualityMode::MinValue, EDLSSQualityMode::MaxValue);
-
-			case EDLSSQualityMode::Performance:
-				return UDLSSMode::Performance;
-
-			case EDLSSQualityMode::Balanced:
-				return UDLSSMode::Balanced;
-
-			case EDLSSQualityMode::Quality:
-				return UDLSSMode::Quality;
-
-			case EDLSSQualityMode::UltraQuality:
-				return UDLSSMode::UltraQuality;
-		};
+		return CurrentDLSSModeDeprecated;
 	}
 #endif
 	return UDLSSMode::Off;

@@ -1,9 +1,9 @@
 {
 	"FileVersion": 3,
-	"Version": 30,
-	"VersionName": "2.4.0b",
-	"FriendlyName": "NVIDIA DLSS/DLAA",
-	"Description": "NVIDIA Deep Learning Super Sampling",
+	"Version": 31,
+	"VersionName": "3.1.0b",
+	"FriendlyName": "NVIDIA DLSS Super Resolution/DLAA",
+	"Description": "NVIDIA Deep Learning Super Sampling Super Resolution",
 	"Category": "Rendering",
 	"CreatedBy": "NVIDIA",
 	"CreatedByURL": "https://developer.nvidia.com/dlss",

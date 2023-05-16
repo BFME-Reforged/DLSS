@@ -28,6 +28,8 @@ struct FDLSSFeatureDesc
 	bool operator != (const FDLSSFeatureDesc& Other) const
 	{
 		return DestRect.Size() != Other.DestRect.Size()
+			|| DLAAPreset != Other.DLAAPreset
+			|| DLSSPreset != Other.DLSSPreset
 			|| PerfQuality != Other.PerfQuality
 			|| bHighResolutionMotionVectors != Other.bHighResolutionMotionVectors
 			|| bNonZeroSharpness != Other.bNonZeroSharpness
@@ -44,6 +46,8 @@ struct FDLSSFeatureDesc
 
 	FIntRect SrcRect = FIntRect(FIntPoint::NoneValue, FIntPoint::NoneValue);
 	FIntRect DestRect = FIntRect(FIntPoint::NoneValue, FIntPoint::NoneValue);
+	int32 DLAAPreset = -1;
+	int32 DLSSPreset = -1;
 	int32 PerfQuality = -1;
 	bool bHighResolutionMotionVectors = false;
 	bool bNonZeroSharpness = false;
@@ -53,6 +57,20 @@ struct FDLSSFeatureDesc
 	uint32 GPUVisibility = 0;
 	FString GetDebugDescription() const
 	{
+		auto NGXDLSSPresetString = [] (int NGXPerfQuality)
+		{
+			switch (NGXPerfQuality)
+			{
+				case NVSDK_NGX_DLSS_Hint_Render_Preset_Default:return TEXT("Default");
+				case NVSDK_NGX_DLSS_Hint_Render_Preset_A:return TEXT("Preset A");
+				case NVSDK_NGX_DLSS_Hint_Render_Preset_B:return TEXT("Preset B");
+				case NVSDK_NGX_DLSS_Hint_Render_Preset_C:return TEXT("Preset C");
+				case NVSDK_NGX_DLSS_Hint_Render_Preset_D:return TEXT("Preset D");
+				case NVSDK_NGX_DLSS_Hint_Render_Preset_E:return TEXT("Preset E");
+				case NVSDK_NGX_DLSS_Hint_Render_Preset_F:return TEXT("Preset F");
+				default:return TEXT("Invalid NVSDK_NGX_DLSS_Hint_Render_Preset");
+			}
+		};
 		auto NGXPerfQualityString = [] (int NGXPerfQuality)
 		{
 			switch (NGXPerfQuality)
@@ -65,11 +83,15 @@ struct FDLSSFeatureDesc
 				default:return TEXT("Invalid NVSDK_NGX_PerfQuality_Value");
 			}
 		};
-		return FString::Printf(TEXT("SrcRect=[%dx%d->%dx%d], DestRect=[%dx%d->%dx%d], ScaleX=%f, ScaleY=%f, NGXPerfQuality=%s(%d), bHighResolutionMotionVectors=%d, bNonZeroSharpness=%d, bUseAutoExposure=%d, bReleaseMemoryOnDelete=%d, GPUNode=%u, GPUVisibility=0x%x"),
+		return FString::Printf(TEXT("SrcRect=[%dx%d->%dx%d], DestRect=[%dx%d->%dx%d], ScaleX=%f, ScaleY=%f, NGXDLAAPreset=%s(%d), NGXDLSSPreset=%s(%d), NGXPerfQuality=%s(%d), bHighResolutionMotionVectors=%d, bNonZeroSharpness=%d, bUseAutoExposure=%d, bReleaseMemoryOnDelete=%d, GPUNode=%u, GPUVisibility=0x%x"),
 			SrcRect.Min.X, SrcRect.Min.Y, SrcRect.Max.X, SrcRect.Max.Y,
 			DestRect.Min.X, DestRect.Min.Y, DestRect.Max.X, DestRect.Max.Y,
 			float(SrcRect.Width()) / float(DestRect.Width()),
 			float(SrcRect.Height()) / float(DestRect.Height()),
+			NGXDLSSPresetString(DLAAPreset),
+			DLAAPreset,
+			NGXDLSSPresetString(DLSSPreset),
+			DLSSPreset,
 			NGXPerfQualityString(PerfQuality),
 			PerfQuality,
 			bHighResolutionMotionVectors,
@@ -100,6 +122,8 @@ struct NGXRHI_API FRHIDLSSArguments
 	float Sharpness = 0.0f;
 	bool bReset = false;
 
+	int32 DLAAPreset = NVSDK_NGX_DLSS_Hint_Render_Preset::NVSDK_NGX_DLSS_Hint_Render_Preset_Default;
+	int32 DLSSPreset = NVSDK_NGX_DLSS_Hint_Render_Preset::NVSDK_NGX_DLSS_Hint_Render_Preset_Default;
 	int32 PerfQuality = 0;
 	float DeltaTime = 0.0f;
 
@@ -114,7 +138,7 @@ struct NGXRHI_API FRHIDLSSArguments
 	
 	inline FDLSSFeatureDesc GetFeatureDesc() const
 	{
-		return FDLSSFeatureDesc{ SrcRect, DestRect, PerfQuality, bHighResolutionMotionVectors, Sharpness != 0.0f, bUseAutoExposure, bReleaseMemoryOnDelete, GPUNode, GPUVisibility};
+		return FDLSSFeatureDesc{ SrcRect, DestRect, DLAAPreset, DLSSPreset, PerfQuality, bHighResolutionMotionVectors, Sharpness != 0.0f, bUseAutoExposure, bReleaseMemoryOnDelete, GPUNode, GPUVisibility};
 	}
 
 	uint32 GetNGXCommonDLSSFeatureFlags() const;
@@ -175,6 +199,7 @@ struct NGXRHI_API FDLSSState
 
 	// this is stored via pointer to allow the NGXRHIs use the API specific functions to create & release
 	TSharedPtr<NGXDLSSFeature> DLSSFeature;
+	float PreviousUpscaleRatio;
 };
 
 using FDLSSStateRef = TSharedPtr<FDLSSState, ESPMode::ThreadSafe>;
@@ -208,6 +233,7 @@ struct FNGXRHICreateArguments
 	uint32 NGXAppId = 0;
 	FString UnrealEngineVersion;
 	FString UnrealProjectID;
+	bool bAllowOTAUpdate = true;
 
 	// centralize that logic here for the derived NGXRHIs
 	bool InitializeNGXWithNGXApplicationID() const
